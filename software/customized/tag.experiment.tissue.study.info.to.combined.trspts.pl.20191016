@@ -1,0 +1,132 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+
+if($#ARGV <0){
+	print "\n\tperl $0 \\\n" . 
+	" \t\t--cmpRltListFile compared.Rlt.list.txt \\\n" .
+	" \t\t--sampleInfoFile alignment.info.of.assembled.experiment.tsv \\\n" . 
+	" \t\t--trsptOriginFile originNameMappingTrsptId.tsv \\\n" .
+	" \t\t--outputTrsptOrignTissueExptListFile trspt.with.orign.tissue.exptList.tsv \\\n" .
+	" \t\t--outputTrsptOrignStudyExptListFile trspt.with.orign.study.exptList.tsv \n";
+	exit(0);
+}
+
+my ($cmpRltListFile, $sampleInfoFile, $trsptOriginFile, $outputTrsptOrignTissueExptListFile, $outputTrsptOrignStudyExptListFile);
+
+GetOptions(
+	'cmpRltListFile=s'=>\$cmpRltListFile, 
+	'sampleInfoFile=s'=>\$sampleInfoFile,
+	'trsptOriginFile=s'=>\$trsptOriginFile,
+	'outputTrsptOrignTissueExptListFile=s'=>\$outputTrsptOrignTissueExptListFile,
+	'outputTrsptOrignStudyExptListFile=s'=>\$outputTrsptOrignStudyExptListFile,
+);
+
+# 将转录本起源(annotation或者StringTie)放在trspt hash中
+my (%trsptToOrign, %trsptToTissueToExptList, %trsptToStudyToExptList, @trsptLine);
+open TRSPT, "<$trsptOriginFile";
+#StringTie       SRX2160812.1.1
+@trsptLine=<TRSPT>;
+close TRSPT;
+foreach my $trsptLine(@trsptLine){
+	chomp($trsptLine);
+	my @tmp = ();
+	@tmp = split(/\t/, $trsptLine);
+	$trsptToOrign{$tmp[1]}= $tmp[0];
+	#print join("\t", $tmp[1], $tmp[0]) . "\n";
+	#<STDIN>;
+}
+
+# 将experiment的tissue信息标注到experiment上，放在experiment hash中
+# ${$experiment{$exptId}}{"Tissue"}
+my (%experiment, $exptId);
+my ($experimentLine, @fieldName, @field);
+open SAMPLE, "<$sampleInfoFile";
+$experimentLine = <SAMPLE>;
+chomp($experimentLine);
+@fieldName = split(/\t/, $experimentLine);
+my $exptIdPos = 0;
+for($exptIdPos=0; $exptIdPos<=$#fieldName; $exptIdPos++){
+        last if($fieldName[$exptIdPos] eq "Experiment");
+}
+while($experimentLine=<SAMPLE>){
+        chomp($experimentLine);
+        @field = ();
+        @field = split(/\t/, $experimentLine);
+        $exptId = $field[$exptIdPos];
+        for(my $i=0; $i<=$#field; $i++){
+                ${$experiment{$exptId}}{$fieldName[$i]} = $field[$i];
+        }
+	#print join("\t", $exptId, ${$experiment{$exptId}}{"Experiment"});
+	#<STDIN>;
+}
+close SAMPLE;
+
+# 依次读取比较结果文件中的转录本，提取其出现在哪个experiment中，根据experiment对应的tissue，得到该转录本出现在哪个tissue中
+# 最后输出2个文件：
+# (1) 组织文件：
+# 	trspt1	shoot:expt1,expt2 pollen:expt3,expt9 seed:expt12
+
+# (2) study文件
+# 	trspt1	SRP00123:expt1,expt3 SRP135786:expt9,expt24
+
+my (@cmpRltList, $cmpRltFile, $experimentId, $tissue, $studyId);
+open CMPRLTLIST, "<$cmpRltListFile";
+@cmpRltList=<CMPRLTLIST>;
+close CMPRLTLIST;
+# /mnt/home/liujind1/workAS1/4577/005-tag-exp-Stdy-to-comTrspts/assemblyDir/cmp.ERX1042546.tmap
+foreach $cmpRltFile(@cmpRltList){
+	# 从比较结果文件名中提取experiment编号，并获得对应的组织信息及其study编号
+	my @tmp = ();
+	@tmp = split(/\//, $cmpRltFile);
+	if($tmp[$#tmp]=~/cmp\.(.*)\.tmap/){
+		$experimentId = $1;
+		$tissue = lc(${$experiment{$experimentId}}{"Tissue"});
+		$studyId = ${$experiment{$experimentId}}{"Study"};
+	}
+
+	# 打开比较结果文件，检索该转录本是否在比较结果文件中以 “=”形式出现，如果有表示出现，否则表示该转录本没有在该experiment中出现
+	# FAM243A ENSBTAT00000018387      o       SRX1149755.1    SRX1149755.1.1  100     0.497800 ...
+	open CMPRLT, "<$cmpRltFile";
+	while(my $cmpRltLine=<CMPRLT>){
+		my @tt = ();
+		@tt = split(/\t/, $cmpRltLine);
+		
+		# 如果不是“=”，表示没有在该experiment中出现
+		next if($tt[2] ne "=");
+
+		# 登记experiment及对应的组织
+		${$trsptToTissueToExptList{$tt[1]}}{$tissue}.=$experimentId . ",";
+		# 登记experiment及其对应的study
+		${$trsptToStudyToExptList{$tt[1]}}{$studyId}.=$experimentId . ",";
+	}
+	close CMPRLT;
+}
+
+# 输出结果文件
+my (@tissue, @study, $trsptId);
+open TWW, ">$outputTrsptOrignTissueExptListFile";
+open SWW, ">$outputTrsptOrignStudyExptListFile";
+my @trsptId = keys(%trsptToTissueToExptList);
+foreach $trsptId(@trsptId){
+
+	@tissue = ();
+	@tissue = keys(%{$trsptToTissueToExptList{$trsptId}});
+	print TWW join("\t", $trsptId, $trsptToOrign{$trsptId});
+	foreach $tissue(@tissue){
+		${$trsptToTissueToExptList{$trsptId}}{$tissue} = substr(${$trsptToTissueToExptList{$trsptId}}{$tissue}, 0, length(${$trsptToTissueToExptList{$trsptId}}{$tissue})-1);
+		print TWW "\t" . $tissue . ":" . ${$trsptToTissueToExptList{$trsptId}}{$tissue};
+	}
+	print TWW "\n";
+
+	@study = ();
+	@study = keys (%{$trsptToStudyToExptList{$trsptId}});
+	print SWW join("\t", $trsptId, $trsptToOrign{$trsptId});
+	foreach $studyId(@study){
+		${$trsptToStudyToExptList{$trsptId}}{$studyId} = substr(${$trsptToStudyToExptList{$trsptId}}{$studyId}, 0, length(${$trsptToStudyToExptList{$trsptId}}{$studyId})-1);
+		print SWW "\t" . $studyId . ":" . ${$trsptToStudyToExptList{$trsptId}}{$studyId};
+	}
+	print SWW "\n";
+}
+close TWW;
+close SWW;

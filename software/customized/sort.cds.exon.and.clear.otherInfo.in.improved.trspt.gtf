@@ -1,0 +1,145 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+                "--gtf \\\n" .
+		"--srtTrsptIdList \\\n" .
+                "--srtGtf \n";
+	exit;
+}
+
+my ($gtf, $srtTrsptIdList, $srtGtf);
+
+GetOptions(
+        'gtf=s'=>\$gtf,
+	'srtTrsptIdList=s'=>\$srtTrsptIdList,
+        'srtGtf=s'=>\$srtGtf,
+);
+
+my ($cmd, $trsptIdList, @srtTrsptId, $trsptId);
+# 将排好序的转录本编号读入到数组中
+$trsptIdList = `cat $srtTrsptIdList`;
+@srtTrsptId = split(/\n/, $trsptIdList);
+
+# 将gtf读入到hash中
+my (%trsptHash, $trsptHref, $line, @field, $geneId, $cdsId, $exonId, $fiveUtrId, $threeUtrId, $transcriptId);
+$trsptHref=\%trsptHash;
+open FF, "<$gtf";
+# 1    plantAS transcript      22904480        22907673        1000    +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; cov "10.
+# 1    plantAS exon    22904480        22906175        1000    +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; exon_number "1";
+# 1    plantAS exon    22906473        22906610        1000    +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; exon_number "2";
+# 1    plantAS exon    22906832        22906923        1000    +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; exon_number "3";
+# 1    plantAS exon    22907129        22907673        1000    +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; exon_number "4";
+# 1    plantAS 5UTR    22904480        22904712        .       +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; 5UTR_number "1";
+# 1    plantAS CDS     22904713        22905966        .       +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; exon_number "1";
+# 1    plantAS 3UTR    22905967        22906175        .       +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; 3UTR_number "1";
+# 1    plantAS 3UTR    22906473        22906610        .       +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; 3UTR_number "2";
+# 1    plantAS 3UTR    22906832        22906923        .       +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; 3UTR_number "3";
+# 1    plantAS 3UTR    22907129        22907673        .       +       .       gene_id "AT1G61970"; transcript_id "SRX853408.5958.1"; 3UTR_number "4";
+while($line=<FF>){
+	chomp($line);
+	@field = split(/\t/, $line);
+
+	# 获得基因和转录本的编号
+	($geneId, $trsptId, $exonId, $cdsId, $fiveUtrId, $threeUtrId) = ("", "", "", "", "", "");
+	&getIDs($field[8], \$geneId, \$trsptId, \$exonId, \$cdsId, \$fiveUtrId, \$threeUtrId);
+        if($field[2] eq "transcript"){
+                $trsptHref->{$trsptId}->{"trsptFeature"} = join("\t", $field[0], $field[1], $field[2], $field[3], $field[4], ".", $field[6], $field[7], "gene_id \"" . $geneId . "\"; " . "transcript_id \"" . $trsptId . "\";");
+                $trsptHref->{$trsptId}->{"strand"} = $field[6];
+        }elsif($field[2] eq "CDS"){
+                $trsptHref->{$trsptId}->{"otherFeatures"} .= join("\t", $field[0], $field[1], $field[2], $field[3], $field[4], ".", $field[6], $field[7], "gene_id \"" . $geneId . "\"; " . "transcript_id \"" . $trsptId . "\";") . "\n";
+        }elsif($field[2] eq "exon"){
+                $trsptHref->{$trsptId}->{"otherFeatures"} .= join("\t", $field[0], $field[1], $field[2], $field[3], $field[4], ".", $field[6], $field[7], "gene_id \"" . $geneId . "\"; " . "transcript_id \"" . $trsptId . "\";") . "\n";
+        }elsif($field[2] eq "3UTR"){
+                $trsptHref->{$trsptId}->{"otherFeatures"} .= join("\t", $field[0], $field[1], $field[2], $field[3], $field[4], ".", $field[6], $field[7], "gene_id \"" . $geneId . "\"; " . "transcript_id \"" . $trsptId . "\";") . "\n";
+        }elsif($field[2] eq "5UTR"){
+                $trsptHref->{$trsptId}->{"otherFeatures"} .= join("\t", $field[0], $field[1], $field[2], $field[3], $field[4], ".", $field[6], $field[7], "gene_id \"" . $geneId . "\"; " . "transcript_id \"" . $trsptId . "\";") . "\n";
+        }
+
+}
+close FF;
+
+# 逐个列出转录本
+my (@featureLine, $featureLine, @attr, @twoDimAttr, $exonId, $exonNum, $cdsId, $cdsNum, $utr3Num, $utr5Num);
+open WW, ">$srtGtf";
+foreach $trsptId(@srtTrsptId){
+	print WW $trsptHref->{$trsptId}->{"trsptFeature"} . "\n";
+#	print $trsptHref->{$trsptId}->{"trsptFeature"} . "\n";
+#	<STDIN>;	
+	# 对当前转录本下的exon和cds进行排序
+	# 正链从小到大，负链从大到小排序
+	@twoDimAttr = ();
+	@featureLine = ();
+#	print $trsptHref->{$trsptId}->{"exonAndCDS"};
+#	<STDIN>;
+	@featureLine = split(/\n/, $trsptHref->{$trsptId}->{"otherFeatures"});
+	foreach $featureLine(@featureLine){
+#		print $featureLine;
+#		<STDIN>;
+		# 将当前行追加到@twoDimAttr
+		push @twoDimAttr,[split '\t', $featureLine];
+	}
+
+	# 如果是正链，那么按照坐标升序排序
+	if($trsptHref->{$trsptId}->{"strand"} eq "+"){
+		@twoDimAttr = sort{$a->[3]<=>$b->[3]} @twoDimAttr;
+	}else{
+		@twoDimAttr = sort{$b->[3]<=>$a->[3]} @twoDimAttr;
+	}
+
+	# 将排序后的结果输出
+	$exonNum = 1;
+	$cdsNum = 1;
+	$utr5Num = 1;
+	$utr3Num = 1;
+	for(my $i=0; $i<=$#twoDimAttr; $i++){
+		if($twoDimAttr[$i][2] eq "exon"){
+			print WW join("\t", $twoDimAttr[$i][0], $twoDimAttr[$i][1], $twoDimAttr[$i][2], $twoDimAttr[$i][3], $twoDimAttr[$i][4], $twoDimAttr[$i][5], $twoDimAttr[$i][6], $twoDimAttr[$i][7], $twoDimAttr[$i][8] . " exon_number \"$exonNum\";") . "\n";
+			$exonNum++;
+		}elsif($twoDimAttr[$i][2] eq "CDS"){
+			print WW join("\t", $twoDimAttr[$i][0], $twoDimAttr[$i][1], $twoDimAttr[$i][2], $twoDimAttr[$i][3], $twoDimAttr[$i][4], $twoDimAttr[$i][5], $twoDimAttr[$i][6], $twoDimAttr[$i][7], $twoDimAttr[$i][8] . " cds_number \"$cdsNum\";") . "\n";
+			$cdsNum++;
+		}elsif($twoDimAttr[$i][2] eq "5UTR"){
+			print WW join("\t", $twoDimAttr[$i][0], $twoDimAttr[$i][1], $twoDimAttr[$i][2], $twoDimAttr[$i][3], $twoDimAttr[$i][4], $twoDimAttr[$i][5], $twoDimAttr[$i][6], $twoDimAttr[$i][7], $twoDimAttr[$i][8] . " 5UTR_number \"$utr5Num\";") . "\n";
+			$utr5Num++;
+		}elsif($twoDimAttr[$i][2] eq "3UTR"){
+			print WW join("\t", $twoDimAttr[$i][0], $twoDimAttr[$i][1], $twoDimAttr[$i][2], $twoDimAttr[$i][3], $twoDimAttr[$i][4], $twoDimAttr[$i][5], $twoDimAttr[$i][6], $twoDimAttr[$i][7], $twoDimAttr[$i][8] . " 3UTR_number \"$utr3Num\";") . "\n";
+			$utr3Num++;
+		}
+
+
+	}
+}
+
+close WW;
+
+sub getIDs{
+	my ($attrString, $geneId, $trsptId, $exonId, $cdsId, $fiveUtrId, $threeUtrId) = @_;
+	my (@attr, $attr);
+	($$geneId, $$trsptId, $$exonId, $$cdsId, $$fiveUtrId, $$threeUtrId) = ("", "");
+	@attr = split(/; /, $attrString);
+	foreach $attr(@attr){
+		if($attr=~/gene_id "(.*)"/){
+			$$geneId = $1;
+		}
+		if($attr=~/transcript_id "(.*)"/){
+			$$trsptId = $1;
+		}
+		if($attr=~/exon_number "(.*)"/){
+			$$exonId = $1;
+		}
+		if($attr=~/cds_number "(.*)"/){
+			$$cdsId = $1;
+		}
+		if($attr=~/3UTR_number "(.*)"/){
+			$$threeUtrId = $1;
+		}
+		if($attr=~/5UTR_number "(.*)"/){
+			$$fiveUtrId = $1;
+		}
+
+	}
+}
+

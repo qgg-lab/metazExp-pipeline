@@ -1,0 +1,116 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+                "--orthoGeneGroupTsv \\\n" .
+                "--taxonIdList \\\n" .
+		"--speciesList \\\n" .
+                "--speciesAbbrList \\\n" .
+		"--orderList \\\n" .
+		"--outputMysqlTsv \n";
+	exit;
+}
+
+my ($orthoGeneGroupTsv, $taxonIdList, $speciesList, $speciesAbbrList, $orderList, $outputMysqlTsv);
+
+GetOptions(
+        'orthoGeneGroupTsv=s'=>\$orthoGeneGroupTsv,
+        'taxonIdList=s'=>\$taxonIdList,
+	'speciesList=s'=>\$speciesList,
+        'speciesAbbrList=s'=>\$speciesAbbrList,
+        'orderList=s'=>\$orderList,
+	'outputMysqlTsv=s'=>\$outputMysqlTsv,
+);
+my (@taxonId, $taxonId, @speciesAbbr, $speciesAbbr, @order, $order, $line, $orthoGeneGroupId, $modifiedGeneIdList, @modifiedGeneId, $modifiedGeneId, $geneId, $i, @species, $species);
+
+# 把分类号、物种缩写、物种名和目名 分解到数组中
+@taxonId = split(/,/, $taxonIdList);
+@speciesAbbr = split(/,/, $speciesAbbrList);
+@species = split(/,/, $speciesList);
+@order = split(/,/, $orderList);
+
+# 扫描上述4个数组，将上述物种信息登记到abbrToTaxonIdToOrder的hash中
+my (%abbrToTaxonIdToOrder, $abbrToTaxonIdToOrderHref);
+$abbrToTaxonIdToOrderHref = \%abbrToTaxonIdToOrder;
+for($i=0; $i<=$#speciesAbbr; $i++){
+	$abbrToTaxonIdToOrderHref->{$speciesAbbr[$i]}->{"taxonId"}=$taxonId[$i];
+	$abbrToTaxonIdToOrderHref->{$speciesAbbr[$i]}->{"order"}=$order[$i];
+	$abbrToTaxonIdToOrderHref->{$speciesAbbr[$i]}->{"species"}=$species[$i];
+	#print join("\t", $speciesAbbr[$i], $taxonId[$i], $order[$i], $species[$i]) . "\n";
+}
+
+my (@fieldName, @fieldValue, $valueString, %hashTmp, $tmpHref, $abbr, $taxonId, $fieldName, $fieldValue);
+$tmpHref=\%hashTmp;
+
+my $nameString=join(", ", "geneId", "orthoGeneGroupId", "taxonId", "species", "speciesAbbr", "orderName");
+
+open WW, ">$outputMysqlTsv";
+
+
+# 打开直系同源groupTsv
+open FF, "<$orthoGeneGroupTsv";
+# 获得数据文件中所有的列名称
+# Orthogroup   AHAL    ZJUJ   AHYP    ALYR    ATHA    BNAP 
+$line=<FF>;
+chomp($line);
+@fieldName = ();
+@fieldName = split(/\t/, $line);
+
+while($line=<FF>){
+	
+	# OG0039044 ZJUJ_LOC112492972_pep001, ZJUJ_LOC112492974_pep001    ATHA_xxx_pep001
+	chomp($line);
+
+	# 将行分解成多个列，存放在valueField数组中
+	@fieldValue = ();
+	@fieldValue = split(/\t/, $line);
+
+	%hashTmp = ();
+
+	# 把行中每一列值放到hash中
+	for($i=0; $i<=$#fieldValue; $i++){
+		$fieldName = $fieldName[$i];
+		$fieldValue = $fieldValue[$i];
+		$tmpHref->{$fieldName} = $fieldValue;
+
+#		print "abbr:" . $fieldName . ":\n";
+#		print "geneIdList:" . $fieldValue . "\n";
+#		print "comOut:$fieldName:" . $tmpHref->{$fieldName} . "\n";
+	}	
+#	<STDIN>;
+
+	$orthoGeneGroupId = $tmpHref->{"Orthogroup"};
+	
+	# 扫描每个物种
+	for($i=0; $i<=$#speciesAbbr; $i++){
+		# 获得该物种的缩写、分类号和目名称
+		$abbr = $speciesAbbr[$i];
+
+		$taxonId = $abbrToTaxonIdToOrderHref->{$abbr}->{"taxonId"};
+		$order = $abbrToTaxonIdToOrderHref->{$abbr}->{"order"};
+		$species = $abbrToTaxonIdToOrderHref->{$abbr}->{"species"};
+
+#		print join("\t", $abbr, $taxonId, $order, $tmpHash{$abbr});
+#		<STDIN>;
+		next if($tmpHref->{$abbr} eq "");
+
+		# 获得该物种下所有基因的ID
+		$modifiedGeneIdList = $tmpHref->{$abbr};
+		@modifiedGeneId = ();
+		@modifiedGeneId = split(/, /, $modifiedGeneIdList);
+
+		foreach $modifiedGeneId(@modifiedGeneId){
+			#print $modifiedGeneId;
+			#<STDIN>;
+			if($modifiedGeneId=~/$abbr(_)(.*?)_pep\d+/){
+				$geneId = $2;
+				$valueString = join(", ", $geneId, $orthoGeneGroupId, $taxonId, $species, $abbr, $order);
+				print WW $nameString . "___" . $valueString . "\n";
+			}						
+		}
+	}
+}
+close FF;
+close WW;

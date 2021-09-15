@@ -1,0 +1,93 @@
+#!/bin/bash
+source ./00000.parameter.of.0000.job1.cfg
+source ../../00-config/commonEnvironmentVars.cfg
+source $commonEnvir
+source $paras
+
+export currDir=`pwd`
+
+
+export assemblyDir=$currDir/../$assembleGoodExpDir/$psiOutputDir
+export curatedExptTsv=$currDir/../$prepareLocalDataSrcDir/curated.experiment.tsv
+export exptAlignInfoTsv=$currDir/alignment.info.of.assembled.experiment.tsv
+export filteredExptAignInfoTsv=$currDir/filtered.alignment.info.of.assembled.experiment.tsv
+export exptCutoffTsv=$currDir/cutoff.info.of.assembled.experiment.tsv
+export referenceGtf=$currDir/../$prepareLocalDataSrcDir/$cmbAnnoGtfFile
+export referenceSta=$currDir/../$prepareLocalDataSrcDir/$cmbAnnoStaFile
+
+perl $customizedSoftwareDir/obtain.alignment.information.of.assembling.experiment.pl \
+	--assemblyDir $assemblyDir \
+	--curatedExprimentTsv $curatedExptTsv \
+	--outputExptAlignInfoTsv $exptAlignInfoTsv \
+	1> $currDir/log.o.obtain.alignment.information.of.assembling.experiment \
+	2> $currDir/log.e.obtain.alignment.information.of.assembling.experiment
+
+
+perl $customizedSoftwareDir/generate.cutoffValue.for.filter.assembled.trspt.pl.20191021 \
+	--assemblyDir $assemblyDir \
+	--assembledExptTsv $exptAlignInfoTsv \
+	--minAligPercentage $minAligPercentage \
+	--minMappedBase $minMappedBase \
+	--unitVolume $unitVolume \
+	--unitTrsptMinCov $unitTrsptMinCov \
+	--unitExonMinCov $unitExonMinCov \
+	--filteredAssembledExptTsv $filteredExptAignInfoTsv \
+	--outputExptCutoffTsv $exptCutoffTsv \
+	1> $currDir/log.o.generate.cutoffValue.for.filter.assembled.trspt\
+	2> $currDir/log.e.generate.cutoffValue.for.filter.assembled.trspt
+
+
+ln -sf $referenceGtf $currDir/combined.gtf.0
+ln -sf $referenceSta $currDir/combined.sta.0
+
+tail -1 $currDir/combined.sta.0 \
+        | awk -F '\t' '{print $2"\t"$3"\t"$4}' \
+        > $currDir/statistic.tsv
+
+export transcriptomeNum=0
+export outputTranscriptomeNum=1
+
+cat $exptCutoffTsv | while read line; do
+	array=($line);
+	export assembly=${array[0]};
+	export trsptMinCov=${array[2]};
+	export exonMinCov=${array[3]};
+
+	ln -sf $assembly $currDir/assembly.gtf.$transcriptomeNum
+
+	perl $customizedSoftwareDir/combined.reference.and.assembly.based.on.cuffcompare.pl.20191017 \
+                --referenceGtf $currDir/combined.gtf.$transcriptomeNum \
+                --assemblyGtf $currDir/assembly.gtf.$transcriptomeNum \
+                --cuffcompare $cuffcompare \
+                --transcriptMinCov      $trsptMinCov \
+                --transcriptMinLen      $trsptMinLen \
+                --exonMinCov            $exonMinCov \
+                --minExonNum            $minExonNum \
+                --outputTmpDir $currDir/combineTmpDir \
+                --outputCombinedGtf $currDir/nonSrt.combined.gtf.$outputTranscriptomeNum \
+                --outputCombineStat $currDir/combined.sta.$outputTranscriptomeNum \
+                1>> $currDir/log.o.combine \
+                2>> $currDir/log.e.combine ;
+
+	rm -rf $currDir/cmp.*
+	
+	perl $customizedSoftwareDir/sort.gtf.by.coordinate.pl \
+                --inputGtfFile $currDir/nonSrt.combined.gtf.$outputTranscriptomeNum \
+                --outputSrtGtfFile $currDir/combined.gtf.$outputTranscriptomeNum \
+                --outputTmpDir $currDir/srtTmpDir \
+                1>> $currDir/log.o.sortGtf \
+                2>> $currDir/log.e.sortGtf ;
+
+	tail -1 $currDir/combined.sta.$outputTranscriptomeNum | awk -F '\t' '{print $2"\t"$3"\t"$4}' >> $currDir/statistic.tsv
+	rm -rf $currDir/assembly.gtf.$transcriptomeNum;
+	rm -rf $currDir/combined.gtf.$transcriptomeNum;
+	rm -rf $currDir/combined.sta.$transcriptomeNum;
+	rm -rf $currDir/nonSrt.combined.gtf.$outputTranscriptomeNum;
+
+	export transcriptomeNum=$[$transcriptomeNum+1];
+	export outputTranscriptomeNum=$[$outputTranscriptomeNum+1];
+done;
+
+export lastNum=`cat $exptCutoffTsv | wc -l`
+ln -sf $currDir/combined.gtf.$lastNum $currDir/$finalCmbTrsptAnnGtfFile
+ln -sf $currDir/combined.sta.$lastNum $currDir/$finalCmbTrsptAnnStaFile

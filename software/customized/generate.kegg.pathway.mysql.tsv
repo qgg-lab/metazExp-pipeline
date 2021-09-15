@@ -1,0 +1,66 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+                "--koAnnoTsv \\\n" .
+                "--keggPathwayTsv \\\n" .
+		"--annotatedKeggPathwayMysqlTsv \n";
+	exit;
+}
+
+my ($koAnnoTsv, $keggPathwayTsv, $annotatedKeggPathwayMysqlTsv);
+
+GetOptions(
+        'koAnnoTsv=s'=>\$koAnnoTsv,
+        'keggPathwayTsv=s'=>\$keggPathwayTsv,
+        'annotatedKeggPathwayMysqlTsv=s'=>\$annotatedKeggPathwayMysqlTsv,
+);
+
+# 读取keggpathwayTsv，其中1个ko可能对应多行pathway
+my (%koToPathway, $koToPathwayHref, $koId);
+my (%nameToValue, $nameList, $valueList, @name, @value, $name, @value, $line);
+$koToPathwayHref = \%koToPathway;
+open FF, "<$keggPathwayTsv";
+while($line=<FF>){
+	chomp($line);
+	($nameList, $valueList) = split(/___/, $line);
+	@name = split(/\t/, $nameList);
+	@value = split(/\t/, $valueList);
+	for(my $i=0; $i<=$#value; $i++){
+		$nameToValue{$name[$i]} = $value[$i];
+	}
+	$koId = $nameToValue{"orthology"};
+	if(not exists($koToPathwayHref->{$koId})){
+		$koToPathwayHref->{$koId} = $line;
+	}else{
+		$koToPathwayHref->{$koId} .= "\n" . $line;
+	}
+}
+close FF;
+
+# 读取基因的ko注释结果
+# Solyc04g080010.3        K08237
+# Solyc05g018570.3        K03066
+# Solyc05g018340.3
+# Solyc08g007200.3
+my ($geneId, $koId, @pathwayLine);
+open FF, "<$koAnnoTsv";
+open WW, ">$annotatedKeggPathwayMysqlTsv";
+while($line=<FF>){
+	if($line=~/(.*)\t(.*)\n/){
+		$geneId = $1;
+		$koId = $2;
+		@pathwayLine = ();
+		@pathwayLine = split(/\n/, $koToPathwayHref->{$koId});
+		foreach my $pathwayLine(@pathwayLine){
+			($nameList, $valueList) = split(/___/, $pathwayLine);
+			$nameList .= "\tgeneId";
+			$valueList .= "\t" . $geneId;
+			print WW $nameList . "___" . $valueList . "\n";
+		}
+	}
+}
+close FF;
+close WW;

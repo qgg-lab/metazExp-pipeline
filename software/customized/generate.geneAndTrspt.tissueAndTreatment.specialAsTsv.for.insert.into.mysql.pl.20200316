@@ -1,0 +1,62 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+		"--specificRltTsv tissueSpecial.tsv \\\n" .
+		"--IDType AS \\\n" .
+		"--specificType  Tissue\\\n" .
+		"--outputAsMysqlTsv 3702.tissue.special.as.mysql.insert.tsv\n";
+	exit;
+}
+
+my ($specificRltTsv, $IDType, $specificType, $outputAsMysqlTsv);
+
+GetOptions(
+	'specificRltTsv=s'=>\$specificRltTsv,
+	'IDType=s'=>\$IDType,
+	'specificType=s'=>\$specificType,
+	'outputAsMysqlTsv=s'=>\$outputAsMysqlTsv,
+);
+
+my ($line);
+
+open WW, ">$outputAsMysqlTsv";
+# 读取组织特异的AS，将组织特异性赋给AS
+my ($nameString, $valueString, $i, $Id);
+my (@specialAsTsv, $specialAsTsv, @typeValue, $typeValue, $type, $ValueExptNum, $Value, $exptNum, $direction, $significanceLevel);
+
+$nameString = join(", ", "ID", "IDType", "specificType", "specificTypeValue", "specificStyle", "value", "significanceLevel");
+open FF, "<$specificRltTsv";
+<FF>;
+#pvalue0.01Rlt   pvalue0.03Rlt   pvalue0.05Rlt   geneId  regulation      tissue/treatment        avgExpTpm       experimentNum   1stTissue/treatment|avgTpm|exptNum|pvalue       2ndTissue/treatment|avgTpm|exptNum|pvalue       3rdTissue/Treatment|avgTpm|exptNum|pvalue       4thTissue/Treatment|avgTpm|exptNum|pvalue       ...
+while($line=<FF>){
+	chomp($line);
+#N       N       N       AT3G01370       High    cotyledon       46.611  30      protoplast|29.152|8|0.000       seedling|39.581|1583|0.000      shoot|46.015|120|0.398  receptacle|34.634|6|0.000       cell|15.085|45|0.000    pollen|0.095|11|0.000   root|10.626|441|0.000   leaf|36.952|1331|0.000  anther|31.152|14|0.000  inflorescence|27.002|50|0.000   flower|38.527|44|0.000  hypocotyl|22.669|30|0.000       ovule|36.232|10|0.008   endosperm|10.880|19|0.000       meristem|24.135|12|0.002        endodermis|6.245|3|0.000        embryo|9.565|58|0.000   silique|20.382|30|0.000 callus|26.724|6|0.000   stem|21.920|35|0.000    seed|17.003|84|0.000    pistil|36.925|10|0.000
+	@typeValue = ();
+	@typeValue = split(/\t/, $line);
+
+	next if($typeValue[0] eq "N" and $typeValue[1] eq "N" and $typeValue[2] eq "N");
+
+	if($typeValue[0] eq "Y"){
+		$significanceLevel = "pvalue0.01";
+	}elsif($typeValue[1] eq "Y"){
+		$significanceLevel = "pvalue0.03";
+	}elsif($typeValue[2] eq "Y"){
+		$significanceLevel = "pvalue0.05";
+	}
+
+	$Id = $typeValue[3];
+	$direction = $typeValue[4];
+	$type = $typeValue[5];
+	$type=~tr/ /_/;
+	$Value = $typeValue[6];
+
+	$valueString = join(", ", $Id, $IDType, $specificType, $type, $direction, $Value, $significanceLevel);
+
+	# 输出
+	print WW join("___", $nameString, $valueString) . "\n";
+}
+close FF;
+close WW;

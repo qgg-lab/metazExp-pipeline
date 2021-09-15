@@ -1,0 +1,54 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+                "--origGtf \\\n" .
+                "--innerGtf \n";
+	exit;
+}
+
+my ($origGtf, $innerGtf);
+
+GetOptions(
+        'origGtf=s'=>\$origGtf,
+        'innerCdsExonGtf=s'=>\$innerGtf,
+);
+
+# 在gtf中将每个trspt的外显子依次读入到hash中
+# 同时提取trsptId到@trsptId中
+my (%gtf, $gtfHref, @trsptId, $trsptId, @field, @attr, @tt);
+$gtfHref=\%gtf;
+open FF, "<$origGtf";
+while(my $line=<FF>){
+	next if($line=~/\ttranscript\t/);
+	@field = ();
+	@field = split(/\t/, $line);
+	@attr = ();
+	@attr = split(/; /, $field[8]);
+	@tt = ();
+	@tt = split(/"/, $attr[1]);
+	$trsptId = $tt[1];
+	if($trsptId[$#trsptId] ne $trsptId){
+		$trsptId[$#trsptId+1] = $trsptId;
+	}
+	$gtfHref->{$trsptId}->{"exonLine"} .= $line;
+	$gtfHref->{$trsptId}->{"exonNum"}++;
+	
+}
+close FF;
+
+# 重新扫描每个trspt，如果exonNum<=2，那么放弃这个trspt；
+# 如果exonNum>2，那么剔除掉第1个和最后1个exon输出 
+open WW, ">$innerGtf";
+my (@exonLine, $exonLine);
+foreach $trsptId(@trsptId){
+	next if($gtfHref->{$trsptId}->{"exonNum"}<=2);
+	@exonLine = ();
+	@exonLine = split(/\n/, $gtfHref->{$trsptId}->{"exonLine"});
+	for(my $i=1; $i<=$#exonLine-1; $i++){
+		print WW $exonLine[$i] . "\n";
+	}
+}
+close WW;

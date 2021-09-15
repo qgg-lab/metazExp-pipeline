@@ -1,0 +1,145 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+
+if($#ARGV < 0){
+	print "perl $0 \\\n" . 
+		"\t\t--mergedAnnoGtf  /mnt/home/liujind1/workAS/01-cattle/database/merged.annotation.gtf \\\n" .
+		"\t\t--anno1Gtf   /mnt/home/liujind1/workAS/01-cattle/database/ensembl.annotation.gtf \\\n" . 
+		"\t\t--anno2Gtf   /mnt/home/liujind1/workAS/01-cattle/database/refSeq.annotation.with_ensemblSeqId.gtf \\\n" . 
+		"\t\t--drawVennRscript /mnt/home/liujind1/workAS/01-cattle/software/customized/draw.vennDiagram.for.three.sets.R  \\\n" .
+		"\t\t--drawDensityRscript /mnt/home/liujind1/workAS/01-cattle/software/customized/draw.densityDiagram.for.three.sets.R  \\\n" .
+		"\t\t--outputStaTbl /mnt/home/liujind1/workAS/01-cattle/database/stat.tsv \n" .
+		"\t\t--outputTrsptEnsRefMergVenn /mnt/home/liujind1/workAS/01-cattle/database/trspt.EnsRefMerg.Venn.png \\\n" .
+		"\t\t--outputExonEnsRefMergVenn /mnt/home/liujind1/workAS/01-cattle/database/exon.EnsRefMerg.venn.png \\\n" .
+		"\t\t--outputDonorEnsRefMergVenn /mnt/home/liujind1/workAS/01-cattle/database/donor.venn.png \\\n" .
+		"\t\t--outputAcceptorEnsRefMergVenn /mnt/home/liujind1/workAS/01-cattle/database/acceptor.venn.png \\\n" .
+		"\t\t--outputTrsptLenEnsRefMergDensity /mnt/home/liujind1/workAS/01-cattle/database/trsptLen.density.png \\\n" .
+		"\t\t--outputExonLenEnsRefMergDensity /mnt/home/liujind1/workAS/01-cattle/database/exonLen.density.png \\\n" .
+		"\t\t--outputTrsptNumEnsRefMergDensity /mnt/home/liujind1/workAS/01-cattle/database/trsptNum.bar.png \\\n" .
+		"\t\t--outputExonNumEnsRefMergDensity /mnt/home/liujind1/workAS/01-cattle/database/exonNum.bar.png \\\n" .
+		"\t\t--outputImagType png \n";
+	exit(0);  
+}
+
+my (	$mergedAnnoGtf, $anno1Gtf, $anno2Gtf, 
+	$drawVennRscript, $drawDensityRscript,
+	$outputStaTbl,
+	$outputTrsptEnsRefMergVenn, $outputExonEnsRefMergVenn,
+	$outputDonorEnsRefMergVenn, $outputAcceptorEnsRefMergVenn,
+	$outputTrsptLenEnsRefMergDensity, $outputTrsptNumEnsRefMergDensity,
+	$outputTrsptNumEnsRefMergBar, $$outputExonNumEnsRefMergBar,
+	$outputImagType	
+);
+
+GetOptions(
+	'mergedAnnoGtf=s'=>\$mergedAnnoGtf, 
+	'anno1Gtf=s'=>\$anno1Gtf, 
+	'anno2Gtf=s'=>\$anno2Gtf,
+	'drawVennRscript=s'=>\$drawVennRscript,
+	'drawDensityRscript=s'=>\$drawDensityRscript,
+	'outputStaTbl=s'=>\$outputStaTbl,
+	'outputTrsptEnsRefMergVenn=s'=>\$outputTrsptEnsRefMergVenn,
+	'outputExonEnsRefMergVenn=s'=>\$outputExonEnsRefMergVenn,
+	'outputDonorEnsRefMergVenn=s'=>\$outputDonorEnsRefMergVenn,
+	'outputAcceptorEnsRefMergVenn=s'=>\$outputAcceptorEnsRefMergVenn,
+	'outputTrsptLenEnsRefMergDensity=s'=>\$outputTrsptLenEnsRefMergDensity,
+	'outputTrsptNumEnsRefMergDensity=s'=>\$outputTrsptNumEnsRefMergDensity,
+	'outputTrsptNumEnsRefMergBar=s'=>\$outputTrsptNumEnsRefMergBar,
+	'outputExonNumEnsRefMergBar=s'=>\$$outputExonNumEnsRefMergBar,
+	'outputImagType=s'=>\$outputImagType
+);
+
+my (%anno1GeneIdToTrsptNum, %anno2GeneIdToTrsptNum, %mergeGeneIdToTrsptNum);
+
+my (%anno1TrsptIdToExonCoord, %anno2TrsptIdToExonCoord, %mergeTrsptIdToExonCoord);
+my (%anno1TrsptIdToTrsptLen, %anno2TrsptIdToTrsptLen, %mergeTrsptIdToTrsptLen);
+
+my (@anno1ExonCoord, @anno2ExonCoord, @mergeExonCoord);
+my (@anno1ExonLen, @anno2ExonLen, @mergeExonLen);
+my (@anno1DonorCoord, @anno2DonorCoord, @mergeDonorCoord);
+my (@anno1AcceptorCoord, @anno2AcceptorCoord, @mergeAcceptorDonorCoord);
+
+my (@fields, @attrs, $featureLine);
+my ($geneId, $transcriptId);
+my (@geneId, @transcriptId, @exonCoordinateFullLine, @srtExon);
+
+#read anno1 exon coordinates into hash
+#read anno1 tanscript and exon into hash %anno1Transcript
+open FF, "<$anno1Gtf";
+while($featureLine =<FF>){
+	chomp($featureLine);
+	@fields = ();
+	@fields = split(/\t/, $featureLine);
+	if($fields[2] eq "exon"){
+		$transcriptId = &getTranscriptId($fields[8]);
+		#register coordinate into hash %anno1TrsptIdToExonCoord
+		$anno1TrsptIdToExonCoord{$transcriptId}.= join("\t", $fields[0], $fields[3], $fields[4], $fields[6]) . "\n";
+		#register feature into hash %anno1TrsptFullFeature
+		$anno1TrsptFullFeature{$transcriptId} .= $featureLine . "\n";
+	}elsif($fields[2] eq "transcript"){
+		#register feature into hash %anno1TrsptFullFeature
+		$transcriptId = &getTranscriptId($fields[8]);
+		$anno1TrsptFullFeature{$transcriptId} .= $featureLine . "\n";
+	}
+}
+close FF;
+#sort exon according to coordinate and load into hash ExonCoordToTrsptId
+@transcriptId = ();
+@transcriptId = keys(%anno1TrsptIdToExonCoord);
+foreach $transcriptId(@transcriptId){
+	@exonCoordinateFullLine = ();
+	@srtExon = ();
+
+	#split exon coordinate full into 1-dim exon array
+	@exonCoordinateFullLine = split(/\n/, $anno1TrsptIdToExonCoord{$transcriptId});
+	#split exon coordinate into 2-dim exon array
+	foreach my $exonCoordinate(@exonCoordinateFullLine){
+		push @srtExon, [split '\t', $exonCoordinate];	
+	}
+
+	#sort by coordinate
+	if($srtExon[0][3] eq "+"){
+		@srtExon = sort{$a->[1]<=>$b->[1]}@srtExon;	
+	}else{
+		@srtExon = sort{$b->[1]<=>$a->[1]}@srtExon;
+	}
+
+	#re-generate exon coordinate full line string
+	my $coordinateFullLineString = "";
+	for(my $i=0; $i<=$#srtExon; $i++){
+		$coordinateFullLineString.=join("#", $srtExon[$i][0], $srtExon[$i][1], $srtExon[$i][2], $srtExon[$i][3]) . "#";
+	}
+	$coordinateFullLineString = substr($coordinateFullLineString, 0, length($coordinateFullLineString) -1);
+
+	$anno1ExonCoordToTrsptId{$coordinateFullLineString} = $transcriptId;
+}
+
+
+sub getTranscriptId{
+	my ($attrsString) = $_[0];
+	my (@attrs, $attr);
+	@attrs = split(/;/, $attrsString);
+	foreach $attr(@attrs){
+		if($attr=~/transcript_id "(.*)"/){
+			return $1;
+		}
+	}
+	return "";
+}
+sub getGeneId{
+	my ($singleTrsptAnnoText) = $_[0];
+	my (@featureLines, $featureLine, @attrs);
+	@featureLines = split(/\n/, $singleTrsptAnnoText);
+	foreach $featureLine(@featureLines){
+		@attrs = ();
+		@attrs = split(/;/, $featureLine);
+		foreach my $attr(@attrs){
+			if($attr=~/gene_id "(.*)"/){
+				return $1;
+			}
+		}
+	}
+	return "";
+
+}

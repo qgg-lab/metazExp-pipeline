@@ -1,0 +1,279 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+		"--finalCuratedExptInfoTsv \\\n" .
+                "--finalFilterExptTsv \\\n" .
+		"--filterAssembledTrsptParameterFile \\\n" .
+		"--jcecExptDir \\\n" .
+		"--outputAssemblyDir \\\n" .
+                "--outputExptTsv\n";
+	exit;
+}
+
+my ($finalFilterExptTsv, $updatedExptTsv, $filterAssembledTrsptParameterFile, $jcecExptDir, $outputAssemblyDir, $outputExptTsv, $finalCuratedExptInfoTsv);
+
+GetOptions(
+	'finalCuratedExptInfoTsv=s'=>\$finalCuratedExptInfoTsv,
+        'finalFilterExptTsv=s'=>\$finalFilterExptTsv,
+	'jcecExptDir=s'=>\$jcecExptDir,
+	'filterAssembledTrsptParameterFile=s'=>\$filterAssembledTrsptParameterFile,
+	'outputAssemblyDir=s'=>\$outputAssemblyDir,
+        'outputExptTsv=s'=>\$outputExptTsv,
+);
+
+# 读取过滤trspt的参数值
+my (%exptToFilterTrsptPara, $exptToFilterTrsptParaHref, $line, @valueField, $assemblyFile, $experimentId, $i);
+my ($a3ssNum, $a5ssNum, $mxeNum, $riNum, $seNum);
+$exptToFilterTrsptParaHref = \%exptToFilterTrsptPara;
+open FF, "<$filterAssembledTrsptParameterFile";
+# fileName   mappedBase minTrsptCov   minExonCov
+# /mnt/home/liujind1/workAS1/3702/004-combine-assemblies-and-annos/../002-assemble-trsptome-on-goodExps/psiOutputDir/SRX3088664/transcriptomeByStringtie.gtf      7.23    3.62    1.81
+while($line=<FF>){
+	chomp($line);
+	@valueField = split(/\t/, $line);
+	if($line=~/.*psiOutputDir\/(.*)\/transcriptomeByStringtie\.gtf/){
+		$experimentId = $1;
+		$exptToFilterTrsptParaHref->{$experimentId}->{"assemblyFile"} = $valueField[0];
+		$exptToFilterTrsptParaHref->{$experimentId}->{"minTrsptReadCov"} = $valueField[2];
+		$exptToFilterTrsptParaHref->{$experimentId}->{"minExonReadCov"} = $valueField[3];		
+	}
+}
+close FF;
+
+
+# 读取最终更新的样品信息，搜集Ecotype/Cultivar/Genotype/Tissue/Development/Treatment/dataSource
+# 将Ecotype/Cultivar/Genotype/Tissue/SubTissue/Development/TissueGroup/Treatment/TreatmentGroup/dataSource/Phenotype
+# 读入hash中
+my (%updatedExptInfo, $updateExptInfoHref);
+my (@nameField, @valueField, %tmpHash, $exptId);
+$updateExptInfoHref = \%updatedExptInfo;
+open FF, "<$finalCuratedExptInfoTsv";
+my $line =<FF>;
+chomp($line);
+@nameField = split(/\t/, $line);
+while($line=<FF>){
+	chomp($line);
+	@valueField = split(/\t/, $line);
+	for($i=0; $i<=$#valueField; $i++){
+		$tmpHash{$nameField[$i]} = $valueField[$i];
+	}
+
+	if($tmpHash{"Ecotype"} ne "/" and $tmpHash{"Ecotype"} ne "-" and $tmpHash{"Ecotype"} ne ""){
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Ecotype"} = $tmpHash{"Ecotype"};
+	}else{
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Ecotype"} = "/";
+	}
+
+	if($tmpHash{"Cultivar"} ne "/" and $tmpHash{"Cultivar"} ne "-" and $tmpHash{"Cultivar"} ne ""){
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Cultivar"} = $tmpHash{"Cultivar"};
+	}else{
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Cultivar"} = "/";
+	}
+
+	if($tmpHash{"Genotype"} ne "/" and $tmpHash{"Genotype"} ne "-" and $tmpHash{"Genotype"} ne ""){
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Genotype"} = $tmpHash{"Genotype"};
+	}else{
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Genotype"} = "/";
+	}
+
+	if($tmpHash{"Tissue"} ne "/" and $tmpHash{"Tissue"} ne "-" and $tmpHash{"Tissue"} ne ""){
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Tissue"} = $tmpHash{"Tissue"};
+	}else{
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Tissue"} = "/";
+	}
+
+	if($tmpHash{"Development"} ne "/" and $tmpHash{"Development"} ne "-" and $tmpHash{"Development"} ne ""){
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Development"} = $tmpHash{"Development"};
+	}else{
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Development"} = "/";
+	}
+
+	if($tmpHash{"Treatment"} ne "/" and $tmpHash{"Treatment"} ne "-" and $tmpHash{"Treatment"} ne ""){
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Treatment"} = $tmpHash{"Treatment"};
+	}else{
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"Treatment"} = "/";
+	}
+
+	if($tmpHash{"dataSource"} ne "/" and $tmpHash{"dataSource"} ne "-" and $tmpHash{"dataSource"} ne ""){
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"dataSource"} = $tmpHash{"dataSource"};
+	}else{
+		$updateExptInfoHref->{$tmpHash{"Experiment"}}->{"dataSource"} = "/";
+	}
+}
+close FF;
+
+
+
+
+
+
+my ($nameString, $valueString);
+my ($a3ssNum, $a5ssNum, $mxeNum, $riNum, $seNum, $totalAsNum);
+my (@nameField, @valueField, %tmpHash);
+# Ecotype Cultivar        Genotype        Tissue  SubTissue       Development     TissueGroup     Treatment       TreatmentGroup  Experiment
+#       Study   DataSource      Base    Layout  SpotsNum        ReadNum SpotLen ReadLen Gather  AS      Assemble        RunList Phenotype       alignPercent    mappedBases     mappedReadNum   detectedReadLen libraryType     phredScore
+
+# 从010:filter中读取参与as识别的experiment
+open FF, "<$finalFilterExptTsv";
+open WW, ">$outputExptTsv";
+$line = <FF>;
+chomp($line);
+@nameField = split(/\t/, $line);
+while($line=<FF>){
+	chomp($line);
+	@valueField = split(/\t/, $line);
+	for($i=0; $i<=$#valueField; $i++){
+		$valueField[$i]=~s/ //;
+		$tmpHash{$nameField[$i]} = $valueField[$i];
+	}
+	if($tmpHash{"alignPercent"} eq ""){
+		$tmpHash{"alignPercent"} = 0;
+	}
+
+	if($tmpHash{"mappedBases"} eq ""){
+		$tmpHash{"mappedBases"} = 0;
+	}
+
+	if($tmpHash{"mappedReadNum"} eq ""){
+		$tmpHash{"mappedReadNum"} = 0;
+	}
+	$experimentId = $tmpHash{"Experiment"};
+
+	# 在jcecPsiFileList中获得experimentId下5种类型AS的数量
+	($totalAsNum, $a3ssNum, $a5ssNum, $mxeNum, $riNum, $seNum) = (0, 0, 0, 0, 0, 0);
+	&getAsNum($experimentId, $jcecExptDir, \$a3ssNum, \$a5ssNum, \$mxeNum, \$riNum, \$seNum);
+	$totalAsNum = $a3ssNum + $a5ssNum + $mxeNum + $riNum + $seNum;
+
+	# 如果某个实验中的可变剪接数为0，那么放弃该实验
+	# next if($totalAsNum ==0 );
+
+	######### 生成experiment字段信息 ##############
+	$nameString = join("###", 
+	"ecotype", 
+	"cultivar", 
+	"genotype", 
+	"tissue", 
+	"subTissue", 
+	"development", 
+	"treatment", 
+	"treatmentGroup", 
+	"experimentId", 
+	"studyId", 
+	"dataSource", 
+	"totalBasedVolume", 
+	"layout", 
+	"spotNum", 
+	"readNum", 
+	"splotLen", 
+	"readLen", 
+	"assemblyTag", 
+	"runIdList", 
+	"phenotype", 
+	"alignPercentage", 
+	"mappedBaseVolume", 
+	"mappedReadNum", 
+	"detectedReadLen", 
+	"libraryType", 
+	"phredScore", 
+	"fileterTrsptMinTrsptReadCov", 
+	"filterTrsptMinExonReadCov", 
+	"asNum",
+	"a3ssNum", 
+	"a5ssNum", 
+	"mxeNum", 
+	"riNum", 
+	"seNum",
+);
+
+	# 生成experiment的值信息
+	if($tmpHash{"Assemble"} == 1 and (-e $exptToFilterTrsptParaHref->{$experimentId}->{"assemblyFile"})){
+		#system("cp " . $exptToFilterTrsptParaHref->{$experimentId}->{"assemblyFile"} . " " . $outputAssemblyDir . "/" . $experimentId . ".gtf");
+		$tmpHash{"Assemble"} = "Y";
+	}else{
+		$tmpHash{"Assemble"} = "N";
+	}
+	if(not exists($exptToFilterTrsptParaHref->{$experimentId}->{"minTrsptReadCov"})){
+		$exptToFilterTrsptParaHref->{$experimentId}->{"minTrsptReadCov"} = -1;
+		$exptToFilterTrsptParaHref->{$experimentId}->{"minExonReadCov"} = -1;
+	}
+
+	$tmpHash{"libraryType"} = "NA" if($tmpHash{"libraryType"} eq "-" or $tmpHash{"libraryType"} eq "");
+	$valueString = join("###", 
+		"-",
+		"-",
+		"-",
+		"-",
+		$tmpHash{"SubTissue"},
+		"-",
+		"-",
+		"-",
+		$tmpHash{"Experiment"},
+		$tmpHash{"Study"},
+		"-",
+		$tmpHash{"Base"},  
+		$tmpHash{"Layout"},  
+		$tmpHash{"SpotsNum"},  
+		$tmpHash{"ReadNum"},  
+		$tmpHash{"SpotLen"}, 
+		$tmpHash{"ReadLen"}, 
+		$tmpHash{"Assemble"}, 
+		$tmpHash{"RunList"}, 
+		"-",
+		$tmpHash{"alignPercent"}, 
+		$tmpHash{"mappedBases"}, 
+		$tmpHash{"mappedReadNum"}, 
+		$tmpHash{"detectedReadLen"}, 
+		$tmpHash{"libraryType"}, 
+		$tmpHash{"phredScore"}, 
+		$exptToFilterTrsptParaHref->{$experimentId}->{"minTrsptReadCov"}, 
+		$exptToFilterTrsptParaHref->{$experimentId}->{"minExonReadCov"}, 
+		$totalAsNum,
+		$a3ssNum,
+		$a5ssNum, 
+		$mxeNum, 
+		$riNum, 
+		$seNum
+);
+	
+	# 输出1条experiment
+	print WW $nameString . "___" . $valueString . "\n";
+}
+close FF;
+close WW;
+
+# 从总的psiFile中获得指定experiment的各类AS数量
+# inclusion和skiping两者至少有1个read覆盖
+sub getAsNum{
+	my ($exptId, $jcecExptDir, $a3ssNum, $a5ssNum, $mxeNum, $riNum, $seNum) =@_;
+	my (@asNum, $i, $psiFile, @line, $line, @field, $cmd, $mulLineText);
+	($$a3ssNum, $$a5ssNum, $$mxeNum, $$riNum, $$seNum) = (0, 0, 0, 0, 0);
+
+	$psiFile = $jcecExptDir . "/" . $exptId;
+	open PSI, "<$psiFile";
+	# ASID    		IJC_SAMPLE   SJC_SAMPLE IncFormLen  SkipFormLen  psi    
+	# OSJGA3SS0000000002    34           14         154         149          0.7015
+	# OSJGA3SS0000000003    17           22         180         149          0.3901
+	<PSI>;
+	while($line=<PSI>){
+		chomp($line);
+		@field = ();
+
+		@field = split(/\t/, $line);
+		next if($field[1] + $field[2] == 0);
+
+		if($field[0]=~/A3SS\d+/){
+			$$a3ssNum++;
+		}elsif($field[0]=~/A5SS\d+/){
+			$$a5ssNum++;
+		}elsif($field[0]=~/SE\d+/){
+			$$seNum++;
+		}elsif($field[0]=~/RI\d+/){
+			$$riNum++;
+		}elsif($field[0]=~/MXE\d+/){
+			$$mxeNum++;
+		}
+	}
+}

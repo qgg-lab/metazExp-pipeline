@@ -1,0 +1,96 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+                "--gtf \\\n" .
+                "--gff3\n";
+	exit;
+}
+
+my ($gtf, $gff3);
+
+GetOptions(
+        'gtf=s'=>\$gtf,
+        'gff3=s'=>\$gff3,
+);
+
+my ($line, @field, $geneId, $trsptId, $exonId, $cdsId, $utr3Id, $utr5Id);
+
+# 将gtf中每一行读出来，转换为gff3格式
+open WW, ">$gff3";
+open FF, "<$gtf";
+# 1       plantAS transcript      1001181 1004288 .       +       .       gene_id "AT1G03920"; transcript_id "SRX1660585.256.4";
+# 1       plantAS exon    1001181 1001301 .       +       .       gene_id "AT1G03920"; transcript_id "SRX1660585.256.4"; exon_number "1";
+# 1       plantAS exon    1001436 1001747 .       +       .       gene_id "AT1G03920"; transcript_id "SRX1660585.256.4"; exon_number "2";
+# 1       plantAS exon    1001809 1002384 .       +       .       gene_id "AT1G03920"; transcript_id "SRX1660585.256.4"; exon_number "3";
+# 1       plantAS CDS     1002248 1002384 .       +       .       gene_id "AT1G03920"; transcript_id "SRX1660585.256.4"; cds_number "1";
+# 1       plantAS exon    1002471 1002687 .       +       .       gene_id "AT1G03920"; transcript_id "SRX1660585.256.4"; exon_number "4";
+# 1       plantAS CDS     1002471 1002687 .       +       .       gene_id "AT1G03920"; transcript_id "SRX1660585.256.4"; cds_number "2";
+# 1       plantAS exon    1002783 1002862 .       +       .       gene_id "AT1G03920"; transcript_id "SRX1660585.256.4"; exon_number "5";
+# 1       plantAS CDS     1002783 1002862 .       +       .       gene_id "AT1G03920"; transcript_id "SRX1660585.256.4"; cds_number "3";
+while($line=<FF>){
+	chomp($line);
+	@field = ();
+	@field = split(/\t/, $line);
+	($geneId, $trsptId, $exonId, $cdsId, $utr3Id, $utr5Id) = ("", "", "", "", "", "");
+	&getIDs($field[8], \$geneId, \$trsptId, \$exonId, \$cdsId, \$utr3Id, \$utr5Id);
+	if($field[2] eq "transcript"){
+		pop(@field);
+		$field[2] = "mRNA";
+		$field[$#field+1] = "ID=$trsptId";
+		print WW join("\t", @field) . "\n";
+	}elsif($field[2] eq "exon"){
+		pop(@field);
+		$field[$#field+1] = "ID=exon.$exonId.$trsptId;Parent=$trsptId";
+		print WW join("\t", @field) . "\n";
+	}elsif($field[2] eq "CDS"){
+		pop(@field);
+		$field[$#field+1] = "ID=cds.$cdsId.$trsptId;Parent=$trsptId";
+		print WW join("\t", @field) . "\n";
+	}elsif($field[2] eq "3UTR"){
+		pop(@field);
+		$field[2] = "three_prime_UTR";
+		$field[$#field+1] = "ID=3utr.$utr3Id.$trsptId;Parent=$trsptId";
+		print WW join("\t", @field) . "\n";
+	}elsif($field[2] eq "5UTR"){
+		pop(@field);
+		$field[2] = "five_prime_UTR";
+		$field[$#field+1] = "ID=5utr.$utr5Id.$trsptId;Parent=$trsptId";
+		print WW join("\t", @field) . "\n";
+	}
+
+
+}
+close FF;
+close WW;
+
+sub getIDs{
+        my ($attrString, $geneId, $trsptId, $exonId, $cdsId, $utr3Id, $utr5Id) = @_;
+        my (@attr, $attr);
+        ($$geneId, $$trsptId, $$exonId, $$cdsId) = ("", "", "", "");
+        @attr = split(/; /, $attrString);
+        foreach $attr(@attr){
+                if($attr=~/gene_id "(.*)"/){
+                        $$geneId = $1;
+                }
+                if($attr=~/transcript_id "(.*)"/){
+                        $$trsptId = $1;
+                }
+		if($attr=~/exon_number "(.*)"/){
+			$$exonId = $1;
+		}
+		if($attr=~/cds_number "(.*)"/){
+			$$cdsId = $1;
+		}
+		if($attr=~/3UTR_number "(.*)"/){
+			$$utr3Id = $1;
+		}
+		if($attr=~/5UTR_number "(.*)"/){
+                        $$utr5Id = $1;
+                }
+
+        }
+}
+

@@ -1,0 +1,63 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+		"--specificRltTsv tissueSpecial.tsv \\\n" .
+		"--IDType AS \\\n" .
+		"--specificType  Tissue\\\n" .
+		"--outputAsMysqlTsv 3702.tissue.special.as.mysql.insert.tsv\n";
+	exit;
+}
+
+my ($specificRltTsv, $IDType, $specificType, $outputAsMysqlTsv);
+
+GetOptions(
+	'specificRltTsv=s'=>\$specificRltTsv,
+	'IDType=s'=>\$IDType,
+	'specificType=s'=>\$specificType,
+	'outputAsMysqlTsv=s'=>\$outputAsMysqlTsv,
+);
+
+my ($line);
+
+open WW, ">$outputAsMysqlTsv";
+# 读取组织特异的AS，将组织特异性赋给AS
+my ($nameString, $valueString, $i, $asId);
+my (@specialAsTsv, $specialAsTsv, @typePsi, $typePsi, $type, $psiExptNum, $psi, $exptNum, $direction, $significanceLevel);
+
+$nameString = join(", ", "ID", "IDType", "specificType", "specificTypeValue", "specificStyle", "value", "significanceLevel");
+open FF, "<$specificRltTsv";
+<FF>;
+#pvalue0.01 pvalue0.03 pvalue0.03 ASID                    Regulate Tissue=PSI      1stTissue|avgPSI|exptNum|pvalue 1stTissue|avgPSI|exptNum|pvalue ……
+while($line=<FF>){
+#N          N          N          ATHARI0000002764        High     endodermis=0.581|8      silique|0.250|21|0.000  stem|0.126|35|0.000     callus|0.227|5|0.000       seedling|0.178|267|0.000        inflorescence|0.145|41|0.000    leaf|0.155|268|0.000    ovule|0.035|8|0.000     seed|0.574|2|0.495      protoplast|0.156|8|0.000        receptacle|0.080|6|0.000        flower|0.111|44|0.000   root|0.192|362|0.000    meristem|0.387|11|0.027 shoot|0.223|10|0.000           pistil|0.148|10|0.000   anther|0.072|6|0.000    cell|0.164|24|  
+	chomp($line);
+	@typePsi = ();
+	@typePsi = split(/\t/, $line);
+	next if($typePsi[0] eq "N" and $typePsi[1] eq "N" and $typePsi[2] eq "N");
+	if($typePsi[0] eq "Y"){
+		$significanceLevel = "pvalue0.01";
+	}elsif($typePsi[1] eq "Y"){
+		$significanceLevel = "pvalue0.03";
+	}elsif($typePsi[2] eq "Y"){
+		$significanceLevel = "pvalue0.05";
+	}
+
+	$asId = $typePsi[3];
+	$direction = $typePsi[4];
+
+	# endodermis=0.581|8
+	($type, $psiExptNum) = split(/=/, $typePsi[5]);
+
+	# 防止组织/处理名称中包含空格，用_代替
+	$type=~tr/ /_/;
+	($psi, $exptNum) = split(/\|/, $psiExptNum);
+	$valueString = join(", ", $asId, $IDType, $specificType, $type, $direction, $psi, $significanceLevel);
+
+	# 输出
+	print WW join("___", $nameString, $valueString) . "\n";
+}
+close FF;
+close WW;

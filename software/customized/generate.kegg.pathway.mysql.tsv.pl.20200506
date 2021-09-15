@@ -1,0 +1,104 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+                "--koAnnoTsv \\\n" .
+                "--koToEnzymeTsv \\\n" .
+                "--keggToGeneTsv \\\n" .
+		"--annotatedKeggPathwayMysqlTsv \n";
+	exit;
+}
+
+my ($koAnnoTsv, $koToEnzymeTsv, $keggToGeneTsv, $annotatedKeggPathwayMysqlTsv);
+
+GetOptions(
+        'koAnnoTsv=s'=>\$koAnnoTsv,
+        'koToEnzymeTsv=s'=>\$koToEnzymeTsv,
+	'keggToGeneTsv=s'=>\$keggToGeneTsv,
+        'annotatedKeggPathwayMysqlTsv=s'=>\$annotatedKeggPathwayMysqlTsv,
+);
+
+# 读取koToEnzymeTsv，获得ko对应的enzymeId, enzymeName, enzymeAbbr
+my (%koToEnzyme, $koToEnzymeHref, $koId);
+my (%nameToValue, $nameList, $valueList, @name, @value, $name, @value, $line);
+$koToEnzymeHref=\%koToEnzyme;
+open FF, "<$koToEnzymeTsv";
+while($line=<FF>){
+	chomp($line);
+	($nameList, $valueList) = split(/___/, $line);
+	@name = split(/\t/, $nameList);
+	@value = split(/\t/, $valueList);
+	for(my $i=0; $i<=$#value; $i++){
+		$nameToValue{$name[$i]} = $value[$i];
+	}
+	$koId = $nameToValue{"orthology"};
+	$koToEnzymeHref->{$koId}->{"enzymeId"}=$nameToValue{"enzymeId"};
+	$koToEnzymeHref->{$koId}->{"enzymeAbbr"}=$nameToValue{"enzymeAbbr"};
+	$koToEnzymeHref->{$koId}->{"enzymeName"}=$nameToValue{"enzymeName"};
+}
+close FF;
+
+# 读取基因的ko注释结果
+# Solyc04g080010.3        K08237
+# Solyc05g018570.3        K03066
+# Solyc05g018340.3
+# Solyc08g007200.3
+my ($geneId, $koId, %geneIdToKo);
+open FF, "<$koAnnoTsv";
+while($line=<FF>){
+	if($line=~/(.*)\t(.*)\n/){
+		$geneId = $1;
+		$koId = $2;
+		$geneIdToKo{$geneId} = $koId;
+	}
+}
+close FF;
+
+# 读取pathway注释，然后以gene为单位将其所在的pathway等信息都输出
+my (@field, @geneId, $geneId, $class1_Id, $class1_name, $class2_Id, $class2_name, $class3_Id, $class3_name, $class3_type, $pathwayId, $orthology, $enzymeAbbr, $enzymeName, $enzymeId, $geneIdList);
+my ($nameList, $valueList);
+open WW, ">$annotatedKeggPathwayMysqlTsv";
+$nameList = join("\t", "1stClassId", "1stClassName", "2ndClassId", "2ndClassName", "3rdClassId", "3rdClassName", "3rdClassType", "pathwayId", "orthology", "enzymeAbbr", "enzymeName", "enzymeId", "geneId");
+# 1stClassId 1stClassName 2ndClassId 2ndClassName 3rdClassId 3rdClassName 3rdClassType pathwayId orthology enzymeAbbr enzymeName enzymeId geneId___09100 Metabolism 09102 Energy metabolism 00190 Oxidative phosphorylation PATH ko00190 K03939  NDUFS6  NADH dehydrogenase (ubiquinone) Fe-S protein 6  -       Solyc03g097010.3
+open FF, "<$keggToGeneTsv";
+# PathwayName         Count (8954)    Pathway ID Level1      Level 2                         Genes                               KOs
+# Metabolic pathways  1962            ko01100    Metabolism  Global and overview maps        Solyc03g097010.3;Solyc11g071620.2   K03939+K09842+K00053
+<FF>;
+while($line=<FF>){
+#	print $line;
+#	<STDIN>;
+	chomp($line);
+	@field = ();
+	@field = split(/\t/, $line);
+	$class3_name = shift(@field);
+	shift(@field);
+	$class3_Id = "-";
+	$pathwayId = shift(@field);
+	$class3_type = "PATH";
+
+	$class1_name = shift(@field);
+	$class1_Id = "-";
+	
+	$class2_Id = "-";
+	$class2_name = shift(@field);
+
+	$geneIdList = shift(@field);
+	@geneId = ();
+	@geneId = split(/;/, $geneIdList);
+#	print join("\t", $pathwayId, $class3_name);
+#	<STDIN>;
+	foreach $geneId(@geneId){
+#		print $geneId;
+#		<STDIN>;
+		$orthology = $geneIdToKo{$geneId};
+		$enzymeAbbr = $koToEnzymeHref->{$koId}->{"enzymeAbbr"};
+		$enzymeName = $koToEnzymeHref->{$koId}->{"enzymeName"};
+		$enzymeId = $koToEnzymeHref->{$koId}->{"enzymeId"};
+		$valueList = join("\t", $class1_Id, $class1_name, $class2_Id, $class2_name, $class3_Id, $class3_name, $class3_type, $pathwayId, $orthology, $enzymeAbbr, $enzymeName, $enzymeId, $geneId);
+		print WW $nameList . "___" . $valueList . "\n";
+	}
+}
+close FF;
+close WW;

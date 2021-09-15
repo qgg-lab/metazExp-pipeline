@@ -1,0 +1,164 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use List::Util qw/max min/;
+use strict;
+if($#ARGV < 0){
+	print   "\n\nThis program is used to generate sbatch scripts.\n" . 
+		"The program will only generate specified experiment\n sbatch script with experimentId parameter\n" . 
+		"\n\n";
+	
+	print "$0 \\\n" .
+		"--sampleInfoTable cattle.samples.tsv \\\n" .
+		"--taskPrefix 9913_008 \\\n" .
+		"--minSpotMillion 1 \\\n" . 
+		"--maxSpotMillion 100 \\\n" . 
+
+		"--psiScript /mnt/home/liujind1/software/customized/psi.in.experiment.pl \\\n" .
+		"--rMATSscript /mnt/home/liujind1/software/rMATS.4.0.2/rMATS-turbo-Linux-UCS2/rmats.py \\\n" . 
+		"--switchPsi  ON \\\n" .
+		"--genomeDb /mnt/home/liujind1/workAS/01-cattle/database/genome \\\n" . 
+		"--cDNAdb /mnt/home/liujind1/workAS/01-cattle/database/cDNA \\\n" . 
+		"--gtfFile /mnt/home/liujind1/workAS/01-cattle/database/annotation.gtf \\\n" . 
+		"--maxIntronSize 12000 \\\n" .
+		"--minIntronSize 20 \\\n" .
+		"--switchAssemble on \\\n" .
+		"--fastqOutputDir /mnt/scratch/liujind1/fastqOutputDir \\\n" .
+		"--logOutputDir /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/logOutputDir \\\n" . 
+		"--psiOutputDir /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/psiOutputDir \\\n" .
+
+		"--taskOutputDir /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/taskOutputDir \\\n" . 
+		"--taskRunTimeLogDir /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/taskRunTime \\\n" . 
+
+		"--nodes 1 \\\n" . 
+		"--ntasksPerNode 1 \\\n" . 
+		"--cpusPerTask 18 \\\n" .
+		"--memorySize 64G \\\n" . 
+		"--pythonDir /mnt/home/liujind1/software/Python-2.7.13/bin \\\n" . 
+		"--pythonLibDir /mnt/home/liujind1/software/Python-2.7.13/lib \\\n" .
+		"--hisat2Dir /mnt/home/liujind1/software/hisat2-2.1.0 \\\n" . 
+		"--stringtie1Dir /mnt/research/qgg/ding/liujind2/software/stringtie-1.3.5 \\\n" . 
+		"--sratoolsDir /mnt/home/liujind1/software/sraToolkit-2.9.4-1/bin \\\n" . 
+		"--samtoolsDir /mnt/home/liujind1/software/samtools-1.9/bin \\\n" . 
+		"--lapackLibDir /mnt/home/liujind1/software/lapack-3.8.0 \\\n" . 
+		"--blasLibDir /mnt/home/liujind1/software/BLAS-3.8.0 \\\n" .
+		"--runMinutesPerMillion 3 \\\n" . 
+
+		"--sraLocalCacheDir /mnt/home/liujind1/ncbi/public/sra \\\n" .
+		
+		"--outputSbatchDir /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/sbatchs\n";		
+		exit;
+}
+my ($sampleInfoTable, $minSpotMillion, $maxSpotMillion);
+my ($expId, $taskPrefix);
+my ($psiScript, $rMATSscript, $switchPsi, $switchAssemble);
+my ($genomeDb, $cDNAdb, $gtfFile);
+my ($maxIntronSize, $minIntronSize);
+my ($logOutputDir, $fastqOutputDir, $psiOutputDir, $taskOutputDir, $taskRunTimeLogDir);
+my ($nodes, $ntasksPerNode, $cpusPerTask, $memorySize);
+my ($pythonDir, $hisat2Dir, $sratoolsDir, $samtoolsDir, $stringtie1Dir);
+my ($pythonLibDir, $lapackLibDir, $blasLibDir);
+my $runMinutesPerMillion;
+my $sraLocalCacheDir;
+my $outputSbatchDir;
+
+GetOptions(
+	'sampleInfoTable=s'=>\$sampleInfoTable,
+	'taskPrefix=s'=>\$taskPrefix,
+	'minSpotMillion=i'=>\$minSpotMillion,
+	'maxSpotMillion=i'=>\$maxSpotMillion,
+	'psiScript=s'=>\$psiScript,
+	'rMATSscript=s'=>\$rMATSscript,
+	'switchPsi=s'=>\$switchPsi,
+	'switchAssemble=s'=>\$switchAssemble,
+	'genomeDb=s'=>\$genomeDb,
+	'cDNAdb=s'=>\$cDNAdb,
+	'gtfFile=s'=>\$gtfFile,
+	'maxIntronSize=s'=>\$maxIntronSize,
+	'minIntronSize=s'=>\$minIntronSize,
+	'logOutputDir=s'=>\$logOutputDir,
+	'fastqOutputDir=s'=>\$fastqOutputDir,
+        'psiOutputDir=s'=>\$psiOutputDir,
+	'taskOutputDir=s'=>\$taskOutputDir,
+	'taskRunTimeLogDir=s'=>\$taskRunTimeLogDir,
+	'nodes=i'=>\$nodes,
+	'ntasksPerNode=i'=>\$ntasksPerNode,
+	'cpusPerTask=i'=>\$cpusPerTask,
+	'memorySize=s'=>\$memorySize,
+	'pythonDir=s'=>\$pythonDir,
+	'hisat2Dir=s'=>\$hisat2Dir,
+	'stringtie1Dir=s'=>\$stringtie1Dir,
+	'sratoolsDir=s'=>\$sratoolsDir,
+	'samtoolsDir=s'=>\$samtoolsDir,
+	'pythonLibDir=s'=>\$pythonLibDir,
+	'lapackLibDir=s'=>\$lapackLibDir,
+	'blasLibDir=s'=>\$blasLibDir,
+	'sraLocalCacheDir=s'=>\$sraLocalCacheDir,
+	'runMinutesPerMillion=i'=>\$runMinutesPerMillion,
+	'outputSbatchDir=s'=>\$outputSbatchDir,
+);
+
+#read each experiment into hash
+my (%experiment);
+my ($runLine, @field);
+open FF, "<$sampleInfoTable";
+
+#$7|___|$10|___|$11|___|$19}
+while($runLine=<FF>){
+	@field = ();
+	@field = split(/\|___\|/, $runLine);
+	${$experiment{$field[18]}}{"runIdList"}.= $field[6] . ","; 
+	${$experiment{$field[18]}}{"spotNum"}+=$field[9];
+	${$experiment{$field[18]}}{"baseNum"}+=$field[10];
+}
+close FF;
+
+my ($sbatchText);
+my @experimentId = keys(%experiment);
+
+for(my $i=0; $i<=$#experimentId; $i++){
+
+	$sbatchText= "#!/bin/bash\n";	
+	$sbatchText.= "#SBATCH --job-name=" . $taskPrefix . "_" . "$experimentId[$i]\n";
+	$sbatchText.= "#SBATCH --nodes=$nodes\n";
+	$sbatchText.= "#SBATCH --ntasks-per-node=$ntasksPerNode\n";
+	$sbatchText.= "#SBATCH --cpus-per-task=$cpusPerTask\n";
+	$sbatchText.= "#SBATCH --mem=$memorySize\n";
+	#计算时间，在真实计算时间基础上再增加3分钟
+	my $minutesNum = ${$experiment{$experimentId[$i]}}{"spotNum"}/1000000 * $runMinutesPerMillion + 3;
+	$sbatchText.= "#SBATCH --time=" . sprintf("%02d", int($minutesNum/60)) . ":" . sprintf("%02d", $minutesNum - int($minutesNum/60) * 60)  . ":00\n\n\n";
+	$sbatchText.= "export PATH=" . $hisat2Dir . ":\$PATH\n";	
+	$sbatchText.= "export PATH=" . $stringtie1Dir . ":\$PATH\n";
+	$sbatchText.= "export PATH=" . $sratoolsDir . ":\$PATH\n";
+	$sbatchText.= "export PATH=" . $samtoolsDir . ":\$PATH\n";
+
+	$sbatchText.= "export PATH=" . $pythonDir . ":\$PATH\n";
+	$sbatchText.= "export LD_LIBRARY_PATH=" . $pythonLibDir . ":\$LD_LIBRARY_PATH\n";
+	$sbatchText.= "export LD_LIBRARY_PATH=" . $lapackLibDir . ":\$LD_LIBRARY_PATH\n";
+	$sbatchText.= "export LAPACK=" .  $lapackLibDir . "\n";
+	$sbatchText.= "export LD_LIBRARY_PATH=" . $blasLibDir . ":\$LD_LIBRARY_PATH\n";
+	$sbatchText.= "export export BLAS=" . $blasLibDir . "/libfblas.a\n";
+	$sbatchText.= "export outputPath=" . $fastqOutputDir . "\n";
+	$sbatchText.= "export threadNum=" . $cpusPerTask . "\n\n\n";
+
+	$sbatchText.= "date > " . $taskRunTimeLogDir . "/runTime." . $experimentId[$i] . "\n\n\n";
+
+	$sbatchText.= "perl " . $psiScript . " --expId " . $experimentId[$i] . " --runIds " . ${$experiment{$experimentId[$i]}}{"runIdList"} . " --genomeDb " . $genomeDb . " --cDNAdb " . $cDNAdb . " --gtfFile " . $gtfFile . " --maxIntronSize " . $maxIntronSize . " --minIntronSize " . $minIntronSize . " --rMats " . $rMATSscript . " --switchPsi " . $switchPsi . " --switchAssemble " . $switchAssemble . " --fastqOutputDir " . $fastqOutputDir . " --psiOutputDir " . $psiOutputDir . " --logOutputDir " . $logOutputDir . " --threadNum $cpusPerTask 1> " . $taskOutputDir . "/log.o." . $experimentId[$i] . ".cmd.sh 2> " . $taskOutputDir . "/log.e." . $experimentId[$i] . "\n\n\n";
+
+	#delete run sra cache file
+	my @runId = ();
+	@runId = split(/,/, ${$experiment{$experimentId[$i]}}{"runIdList"});
+
+	#If cache sra file
+	for(my $j = 0; $j<=$#runId; $j++){
+		$sbatchText.= "rm -rf " . $sraLocalCacheDir . "/" . $runId[$j] . ".sra\n";
+	}
+
+	$sbatchText.= "\ndate >> " . $taskRunTimeLogDir . "/runTime." . $experimentId[$i] . "\n";
+
+	if(${$experiment{$experimentId[$i]}}{"spotNum"}/1000000 >= $minSpotMillion and ${$experiment{$experimentId[$i]}}{"spotNum"}/1000000 <= $maxSpotMillion){
+		open WW, ">" . $outputSbatchDir . "/" . $experimentId[$i];
+		print WW $sbatchText;
+		close WW;	
+	}
+}

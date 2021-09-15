@@ -1,0 +1,654 @@
+#!/usr/bin/perl
+use Getopt::Long;
+use strict;
+if($#ARGV < 0){
+	print "This script is used to gather experiment information\n\n";
+	print "$0 \\\n" . 
+		"\t\t --psiOutputDir    /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/psiOutputDir \\\n" . 
+		"\t\t --expIdList       /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/experiment.Id.list.txt \\\n" .
+
+		"\t\t --outputExperimentInfo /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/experimentInfo.tsv \\\n" . 
+
+		"\t\t --outputTotalA5SS  /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/totalA5SS.tsv \\\n" .
+		"\t\t --outputTotalA3SS  /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/totalA3SS.tsv \\\n" .
+		"\t\t --outputTotalSE    /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/totalSE.tsv \\\n" .
+		"\t\t --outputTotalRI    /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/totalRI.tsv \\\n" .
+		"\t\t --outputTotalMXE   /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/totalMXE.tsv \\\n" .
+
+		"\t\t --outputNovelA5SS  /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/novelA5SS.tsv \\\n" .
+		"\t\t --outputNovelA3SS  /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/novelA3SS.tsv \\\n" .
+		"\t\t --outputNovelSE    /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/novelSE.tsv \\\n" .
+		"\t\t --outputNovelRI    /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/novelRI.tsv \\\n" .
+		"\t\t --outputNovelMXE   /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/novelMXE.tsv \\\n" .
+
+		"\t\t --outputJcecA5SS   /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcecA5SS.tsv \\\n" .
+		"\t\t --outputJcecA3SS   /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcecA3SS.tsv \\\n" .
+		"\t\t --outputJcecSE     /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcecSE.tsv \\\n" .
+		"\t\t --outputJcecRI     /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcecRI.tsv \\\n" .
+		"\t\t --outputJcecMXE    /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcecMXE.tsv \\\n" .
+
+		"\t\t --outputJcA5SS     /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcA5SS.tsv \\\n" .
+		"\t\t --outputJcA3SS     /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcA3SS.tsv \\\n" .
+		"\t\t --outputJcSE       /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcSE.tsv \\\n" .
+		"\t\t --outputJcRI       /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcRI.tsv \\\n" .
+		"\t\t --outputJcMXE      /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/jcMXE.tsv \\\n" .
+
+		"\t\t --outputGeneAbun   /mnt/home/liujind1/workAS/01-cattle/001-gather-experiment-psi/gatherRlt/geneAbun.tsv \n" ;
+
+	exit(0);
+}
+
+my ($expId, @expDir, $psiOutputDir, $experimentId, $outputExperimentInfo);
+my ($outputTotalA5SS, $outputTotalA3SS, $outputTotalSE, $outputTotalRI, $outputTotalMXE);
+my ($outputNovelA5SS, $outputNovelA3SS, $outputNovelSE, $outputNovelRI, $outputNovelMXE);
+my ($outputJcecA5SS, $outputJcecA3SS, $outputJcecSE, $outputJcecRI, $outputJcecMXE);
+my ($outputJcA5SS, $outputJcA3SS, $outputJcSE, $outputJcRI, $outputJcMXE);
+my ($outputGeneAbun);
+
+GetOptions(
+        'psiOutputDir=s'=>\$psiOutputDir,
+        'expIdList=s'=>\$experimentId,
+
+        'outputExperimentInfo=s'=>\$outputExperimentInfo,
+
+        'outputTotalA5SS=s'=>\$outputTotalA5SS,
+        'outputTotalA3SS=s'=>\$outputTotalA3SS,
+        'outputTotalSE=s'=>\$outputTotalSE,
+        'outputTotalRI=s'=>\$outputTotalRI,
+        'outputTotalMXE=s'=>\$outputTotalMXE,
+
+        'outputNovelA5SS=s'=>\$outputNovelA5SS,
+        'outputNovelA3SS=s'=>\$outputNovelA3SS,
+        'outputNovelSE=s'=>\$outputNovelSE,
+        'outputNovelRI=s'=>\$outputNovelRI,
+        'outputNovelMXE=s'=>\$outputNovelMXE,
+
+        'outputJcecA5SS=s'=>\$outputJcecA5SS,
+        'outputJcecA3SS=s'=>\$outputJcecA3SS,
+        'outputJcecSE=s'=>\$outputJcecSE,
+        'outputJcecRI=s'=>\$outputJcecRI,
+        'outputJcecMXE=s'=>\$outputJcecMXE,
+
+        'outputJcA5SS=s'=>\$outputJcA5SS,
+        'outputJcA3SS=s'=>\$outputJcA3SS,
+        'outputJcSE=s'=>\$outputJcSE,
+        'outputJcRI=s'=>\$outputJcRI,
+        'outputJcMXE=s'=>\$outputJcMXE,
+	'outputGeneAbun=s'=>\$outputGeneAbun,
+);
+
+#检测psiOutputDir目录是否存在
+if(not -e $psiOutputDir){
+	print STDERR "$psiOutputDir doesn't exist!\n";
+	exit;
+}
+
+#extract experiment Id into array
+my $expDirText = "";
+$psiOutputDir = $psiOutputDir . "/" if(substr($psiOutputDir, length($psiOutputDir)-1, 1) ne "/");
+if($experimentId ne "" and -e $experimentId){
+	open FF, "<$experimentId";
+	while(my $expId=<FF>){
+		chomp($expId);
+		if(not -e $psiOutputDir . $expId . "/"){
+			print STDERR $psiOutputDir . $expId . " doesn't exist!\n";
+		}else{
+			$expDir[$#expDir+1] = $psiOutputDir . $expId;
+			print STDOUT "Gather experiment information from " . $psiOutputDir . $expId . "/\n";
+		}
+	}
+	close FF;	
+}else{
+	$expDirText = `find $psiOutputDir -type d -maxdepth 1`;
+	@expDir = split(/\n/, $expDirText);
+	shift(@expDir);
+	for(my $i=0; $i<=$#expDir; $i++){
+		print STDOUT "Gather experiment information from " . $expDir[$i] . "/\n";
+	}
+	
+}
+
+
+#gather information from experiment dir
+my ($experimentDir);
+my ($status, $runNum, $runId, $library, $layout, $phredScore);
+my ($spotNum, $readLength, $alignPer);
+my ($novelSpliceNum);
+my ($annoCovGeneNum, $annoCovTranscriptNum);
+my (%totalAS, %novelAS, %JCECAS, %JCAS);
+my (@tmpArr, @tmpAsField, $asId);
+my (%totalAsA5ssHash, %totalAsA3ssHash, %totalAsSeHash, %totalAsRiHash, %totalAsMxeHash);
+
+open EXPERIMENT, ">$outputExperimentInfo";
+        print EXPERIMENT join("\t", "expId", "status", "runNum", "runId", "library", "layout", "phredScore", "readLength",
+                "spotNum(M)", "alignPer(%)", "novelSpliceNum", "annoCovGeneNum", "annoCovTranscriptNum",
+                "totalA5SS", "totalA3SS", "totalSE", "totalRI", "totalMXE",
+                "novelA5SS", "novelA3SS", "novelSE", "novelRI", "novelMXE",
+                "jcecA5SS", "jcecA3SS", "jcecSE", "jcecRI", "jcecMXE",
+                "jcA5SS", "jcA3SS", "jcSE", "jcRI", "jcMXE") . "\n";
+
+open TOTALA5SS, ">$outputTotalA5SS";
+open TOTALA3SS, ">$outputTotalA3SS";
+open TOTALSE, ">$outputTotalSE";
+open TOTALRI, ">$outputTotalRI";
+open TOTALMXE, ">$outputTotalMXE";
+
+open NOVELA5SS, ">$outputNovelA5SS";
+open NOVELA3SS, ">$outputNovelA3SS";
+open NOVELSE, ">$outputNovelSE";
+open NOVELRI, ">$outputNovelRI";
+open NOVELMXE, ">$outputNovelMXE";
+
+open JCECA5SS, ">$outputJcecA5SS";
+open JCECA3SS, ">$outputJcecA3SS";
+open JCECSE, ">$outputJcecSE";
+open JCECRI, ">$outputJcecRI";
+open JCECMXE, ">$outputJcecMXE";
+
+open JCA5SS, ">$outputJcA5SS";
+open JCA3SS, ">$outputJcA3SS";
+open JCSE, ">$outputJcSE";
+open JCRI, ">$outputJcRI";
+open JCMXE, ">$outputJcMXE";
+
+open GENEABUN, ">$outputGeneAbun";
+
+for(my $i=0; $i<=$#expDir; $i++){
+	$runNum = 0;
+	$runId = "";
+	$library = "";
+	$layout = "";
+	$readLength = "";
+	$phredScore = "";
+	$spotNum = 0;
+	$alignPer = "";
+	$annoCovGeneNum = 0;
+	$annoCovTranscriptNum = 0;
+	
+	%totalAS = ();
+	%novelAS = ();
+	%JCECAS = ();
+	%JCAS =();
+
+	@tmpArr = ();
+	@tmpArr = split(/\//, $expDir[$i]);
+	$expId = $tmpArr[$#tmpArr];
+
+	$experimentDir = $expDir[$i] . "/";
+	#detect running status
+	if(-e $experimentDir . "/" . "fromGTF.A5SS.txt"){
+		$status = "OK";
+	}else{
+		$status = "ERROR";
+	}
+
+	#detect novel splice num
+	$novelSpliceNum = "";
+	if(-e $experimentDir . "/" . $expId . ".novel.splicesite.from.hisat.txt"){
+		my $cmd = "wc -l " . $experimentDir . "/" . $expId . ".novel.splicesite.from.hisat.txt";
+		$novelSpliceNum = `$cmd`;
+		chomp($novelSpliceNum);
+		if($novelSpliceNum=~/(\d+) .*/){
+			$novelSpliceNum = $1;
+		}
+	}
+
+	#extract run information
+	if(-e $experimentDir . "/" . $expId . ".SeqInfo.txt"){
+		open FF, "<" . $experimentDir . "/" . $expId . ".SeqInfo.txt";		
+		<FF>;
+		while(my $line = <FF>){
+			chomp($line);
+			@tmpArr = ();
+			@tmpArr = split(/\t/, $line);		
+			if($#tmpArr==7){
+				$runNum = $runNum + 1;
+				$runId .= $tmpArr[1] . ",";
+				$layout .= $tmpArr[2] . ",";
+				$readLength .= $tmpArr[3] . ",";
+				$phredScore .= $tmpArr[4] . ",";
+				$library .= $tmpArr[6] . ",";
+			}elsif($line=~/TotalSpot:(.*)\tAlignPercent:(.*)/){
+				$spotNum = int(($1/1000000)*100)/100;
+				$alignPer = $2;
+			}
+		}
+		close FF;
+		if($runNum > 0){
+			$runId = substr($runId, 0, length($runId) -1);
+			$layout =substr($layout, 0, length($layout) -1);
+			$readLength = substr($readLength, 0, length($readLength) -1);
+			$library = substr($library, 0, length($library) - 1);
+			$phredScore = substr($phredScore, 0, length($phredScore) -1 );
+		}
+	}
+
+	#extract annoCovGeneNum and annoCovTranscriptNum
+	if(-e $experimentDir . "/" . "annotationCovByStringtie.gtf"){
+		my $cmd= "grep -P \"\\tmRNA\\t\" " .
+			 $experimentDir . "/" . "annotationCovByStringtie.gtf" . 
+			 " | awk -F \';\' \'{print \$4}\' |sort -u |wc -l";
+		$annoCovGeneNum = `$cmd`;
+		chomp($annoCovGeneNum);
+
+		$cmd = "grep -P \"\\tmRNA\\t\" " . 
+			$experimentDir . "/" ."annotationCovByStringtie.gtf" . 
+			" | awk -F \'\\t\' \'{print \$9}\' | awk -F \';\' \'{print \$1}\' | sort -u | wc -l";	
+		$annoCovTranscriptNum = `$cmd`;
+		chomp($annoCovTranscriptNum);
+	}
+
+
+	#extract gene abundance
+	if( -e $experimentDir . "/" . "geneAbundanceByStringtie.tab"){
+		#Gene ID Gene Name       Reference       Strand  Start   End     Coverage        FPKM    TPM
+		#ENSBTAG00000006648      -       1       -       339070  350389  0.020022        0.005060        0.012255
+		#STRG.1  -       1       -       764121  820845  19.719410       4.983937        12.069514
+		open FGENEABUN, "<" . $experimentDir . "/" . "geneAbundanceByStringtie.tab";
+		<FGENEABUN>;
+		while(my $line = <FGENEABUN>){
+			chomp($line);
+			print GENEABUN join("\t", $line, $expId) . "\n";
+		}
+		close FGENEABUN;
+	}
+
+	#register total AS and extract total AS num
+	%totalAsA5ssHash = ();
+	%totalAsA3ssHash = ();
+	%totalAsSeHash = ();
+	%totalAsRiHash = ();
+	%totalAsMxeHash = ();
+	if(-e $experimentDir . "/" . "fromGTF.A5SS.txt"){
+		my $cmd = "wc -l " . $experimentDir . "/" . "fromGTF.A5SS.txt";
+		$totalAS{"A5SS"} = `$cmd`;
+		chomp($totalAS{"A5SS"});
+		if($totalAS{"A5SS"}=~/(\d+) .*/){
+			$totalAS{"A5SS"} = $1 - 1;
+		}
+	
+		$cmd = "wc -l " . $experimentDir . "/" . "fromGTF.A3SS.txt";
+		$totalAS{"A3SS"} = `$cmd`;
+		chomp($totalAS{"A3SS"});
+		if($totalAS{"A3SS"}=~/(\d+) .*/){
+			$totalAS{"A3SS"} = $1 - 1;
+		}
+	
+		$cmd = "wc -l " . $experimentDir . "/" . "fromGTF.SE.txt";
+		$totalAS{"SE"} = `$cmd`;
+		chomp($totalAS{"SE"});
+		if($totalAS{"SE"}=~/(\d+) .*/){
+			$totalAS{"SE"} = $1 - 1;
+		}
+
+		$cmd = "wc -l " . $experimentDir . "/" . "fromGTF.RI.txt";
+		$totalAS{"RI"} = `$cmd`;
+		chomp($totalAS{"RI"});
+		if($totalAS{"RI"}=~/(\d+) .*/){
+			$totalAS{"RI"} = $1 -1;
+		}
+
+		$cmd = "wc -l " . $experimentDir . "/" . "fromGTF.MXE.txt";
+		$totalAS{"MXE"} = `$cmd`;
+		chomp($totalAS{"MXE"});
+		if($totalAS{"MXE"}=~/(\d+) .*/){
+			$totalAS{"MXE"} = $1 - 1;
+		}
+
+		# register total AS into hash table and write into output totalAS files
+		#ID GeneID geneSymbol chr strand longExonStart_0base longExonEnd shortES shortEE flankingES flankingEE
+		open FA5SS, "<" . $experimentDir . "/" . "fromGTF.A5SS.txt";
+		<FA5SS>;
+		while(my $line = <FA5SS>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			$totalAsA5ssHash{$asId} = join("\t", @tmpAsField);
+			print TOTALA5SS join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FA5SS;
+
+		open FA3SS, "<" . $experimentDir . "/" . "fromGTF.A3SS.txt";
+		<FA3SS>;
+		while(my $line = <FA3SS>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			$totalAsA3ssHash{$asId} = join("\t", @tmpAsField);
+			print TOTALA3SS join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FA3SS;
+
+		open FSE, "<" . $experimentDir . "/" . "fromGTF.SE.txt";
+		<FSE>;
+		while(my $line = <FSE>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			$totalAsSeHash{$asId} = join("\t", @tmpAsField);
+			print TOTALSE join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FSE;
+
+		open FRI, "<" . $experimentDir . "/" . "fromGTF.RI.txt";
+		<FRI>;
+		while(my $line = <FRI>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			$totalAsRiHash{$asId} = join("\t", @tmpAsField);
+			print TOTALRI join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FRI;
+
+		open FMXE, "<" . $experimentDir . "/" . "fromGTF.MXE.txt";
+		<FMXE>;
+		while(my $line = <FMXE>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			$totalAsMxeHash{$asId} = join("\t", @tmpAsField);
+			print TOTALMXE join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FMXE;
+	}
+
+	#extract novel AS num
+	if(-e $experimentDir . "/" . "fromGTF.novelEvents.A5SS.txt"){
+		my $cmd = "wc -l " . $experimentDir . "/" . "fromGTF.novelEvents.A5SS.txt";
+		$novelAS{"A5SS"} = `$cmd`;
+		chomp($novelAS{"A5SS"});
+		if($novelAS{"A5SS"}=~/(\d+) .*/){
+			$novelAS{"A5SS"} = $1 - 1;
+		}
+	
+		$cmd = "wc -l " . $experimentDir . "/" . "fromGTF.novelEvents.A3SS.txt";
+		$novelAS{"A3SS"} = `$cmd`;
+		chomp($novelAS{"A3SS"});
+		if($novelAS{"A3SS"}=~/(\d+) .*/){
+			$novelAS{"A3SS"} = $1 - 1;
+		}
+	
+		$cmd = "wc -l " . $experimentDir . "/" . "fromGTF.novelEvents.SE.txt";
+		$novelAS{"SE"} = `$cmd`;
+		chomp($novelAS{"SE"});
+		if($novelAS{"SE"}=~/(\d+) .*/){
+			$novelAS{"SE"} = $1 -1;
+		}
+
+		$cmd = "wc -l " . $experimentDir . "/" . "fromGTF.novelEvents.RI.txt";
+		$novelAS{"RI"} = `$cmd`;
+		chomp($novelAS{"RI"});
+		if($novelAS{"RI"}=~/(\d+) .*/){
+			$novelAS{"RI"} = $1 - 1;
+		}
+
+		$cmd = "wc -l " . $experimentDir . "/" . "fromGTF.novelEvents.MXE.txt";
+		$novelAS{"MXE"} = `$cmd`;
+		chomp($novelAS{"MXE"});
+		if($novelAS{"MXE"}=~/(\d+) .*/){
+			$novelAS{"MXE"} = $1 -1;
+		}
+
+		#open novel AS files and output As into summary output file according to total AS hash table
+		#ID GeneID geneSymbol chr strand longExonStart_0base longExonEnd shortES shortEE flankingES flankingEE
+		open FA5SS, "<" . $experimentDir . "/" . "fromGTF.novelEvents.A5SS.txt";
+		<FA5SS>;
+		while(my $line = <FA5SS>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print NOVELA5SS join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FA5SS;
+
+		open FA3SS, "<" . $experimentDir . "/" . "fromGTF.novelEvents.A3SS.txt";
+		<FA3SS>;
+		while(my $line = <FA3SS>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print NOVELA3SS join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FA3SS;
+
+		open FSE, "<" . $experimentDir . "/" . "fromGTF.novelEvents.SE.txt";
+		<FSE>;
+		while(my $line = <FSE>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print NOVELSE join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FSE;
+
+		open FRI, "<" . $experimentDir . "/" . "fromGTF.novelEvents.RI.txt";
+		<FRI>;
+		while(my $line = <FRI>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print NOVELRI join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FRI;
+
+		open FMXE, "<" . $experimentDir . "/" . "fromGTF.novelEvents.MXE.txt";
+		<FMXE>;
+		while(my $line = <FMXE>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print NOVELMXE join("\t", @tmpAsField, $expId) . "\n";
+		}
+		close FMXE;
+	}
+
+        #extract AS num in JCEC
+	if(-e $experimentDir . "/" . "JCEC.raw.input.A5SS.txt"){
+		$JCECAS{"A5SS"} = &getNumWithReadSupport($experimentDir . "/" . "JCEC.raw.input.A5SS.txt");
+		$JCECAS{"A3SS"} = &getNumWithReadSupport($experimentDir . "/" . "JCEC.raw.input.A3SS.txt");
+		$JCECAS{"SE"} = &getNumWithReadSupport($experimentDir . "/" . "JCEC.raw.input.SE.txt");
+		$JCECAS{"RI"} = &getNumWithReadSupport($experimentDir . "/" . "JCEC.raw.input.RI.txt");
+		$JCECAS{"MXE"} = &getNumWithReadSupport($experimentDir . "/" . "JCEC.raw.input.MXE.txt");
+
+		#read psi of A5SS from JECE and write psi into output file
+		open FA5SS, "<" . $experimentDir . "/" . "JCEC.raw.input.A5SS.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FA5SS>;
+		while(my $line = <FA5SS>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCECA5SS join("\t", $totalAsA5ssHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FA5SS;
+
+		open FA3SS, "<" . $experimentDir . "/" . "JCEC.raw.input.A3SS.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FA3SS>;
+		while(my $line = <FA3SS>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCECA3SS join("\t", $totalAsA3ssHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FA3SS;
+
+		open FSE, "<" . $experimentDir . "/" . "JCEC.raw.input.SE.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FSE>;
+		while(my $line = <FSE>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCECSE join("\t", $totalAsSeHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FSE;
+
+		open FRI, "<" . $experimentDir . "/" . "JCEC.raw.input.RI.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FRI>;
+		while(my $line = <FRI>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCECRI join("\t", $totalAsRiHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FRI;
+
+		open FMXE, "<" . $experimentDir . "/" . "JCEC.raw.input.MXE.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FMXE>;
+		while(my $line = <FMXE>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCECMXE join("\t", $totalAsMxeHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FMXE;
+	}
+        #extract AS num in JC
+	if(-e $experimentDir . "/" . "JC.raw.input.A5SS.txt"){
+		$JCAS{"A5SS"} = &getNumWithReadSupport($experimentDir . "/" . "JC.raw.input.A5SS.txt");
+		$JCAS{"A3SS"} = &getNumWithReadSupport($experimentDir . "/" . "JC.raw.input.A3SS.txt");
+		$JCAS{"SE"} = &getNumWithReadSupport($experimentDir . "/" . "JC.raw.input.SE.txt");
+		$JCAS{"RI"} = &getNumWithReadSupport($experimentDir . "/" . "JC.raw.input.RI.txt");
+		$JCAS{"MXE"} = &getNumWithReadSupport($experimentDir . "/" . "JC.raw.input.MXE.txt");
+
+		open FA5SS, "<" . $experimentDir . "/" . "JC.raw.input.A5SS.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FA5SS>;
+		while(my $line = <FA5SS>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCA5SS join("\t", $totalAsA5ssHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FA5SS;
+
+		open FA3SS, "<" . $experimentDir . "/" . "JC.raw.input.A3SS.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FA3SS>;
+		while(my $line = <FA3SS>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCA3SS join("\t", $totalAsA3ssHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FA3SS;
+
+		open FSE, "<" . $experimentDir . "/" . "JC.raw.input.SE.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FSE>;
+		while(my $line = <FSE>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCSE join("\t", $totalAsSeHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FSE;
+
+		open FRI, "<" . $experimentDir . "/" . "JC.raw.input.RI.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FRI>;
+		while(my $line = <FRI>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCRI join("\t", $totalAsRiHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FRI;
+
+		open FMXE, "<" . $experimentDir . "/" . "JC.raw.input.MXE.txt";
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       0       0                       102     99
+		<FMXE>;
+		while(my $line = <FMXE>){
+			chomp($line);
+			@tmpAsField = ();
+			@tmpAsField = split(/\t/, $line);		
+			$asId = $tmpAsField[0];
+			shift(@tmpAsField);
+			print JCMXE join("\t", $totalAsMxeHash{$asId}, @tmpAsField, $expId) . "\n";
+		}
+		close FMXE;
+
+	}
+
+	#output experiment information
+	print EXPERIMENT join("\t", $expId, $status, $runNum, $runId, $library, $layout, $phredScore, $readLength, 
+		$spotNum, $alignPer, $novelSpliceNum, $annoCovGeneNum, $annoCovTranscriptNum,
+		$totalAS{"A5SS"}, $totalAS{"A3SS"}, $totalAS{"SE"}, $totalAS{"RI"}, $totalAS{"MXE"},
+		$novelAS{"A5SS"}, $novelAS{"A3SS"}, $novelAS{"SE"}, $novelAS{"RI"}, $novelAS{"MXE"},
+		$JCECAS{"A5SS"}, $JCECAS{"A3SS"}, $JCECAS{"SE"}, $JCECAS{"RI"}, $JCECAS{"MXE"},
+		$JCAS{"A5SS"}, $JCAS{"A3SS"}, $JCAS{"SE"}, $JCAS{"RI"}, $JCAS{"MXE"}) . "\n";
+}
+close EXPERIMENT;
+
+
+#obtain the num of AS with at least one read support in IJC or SJC
+sub getNumWithReadSupport{
+	my $asFile = $_[0];
+	my (@tt, $asNum);
+	open ASFF, "<$asFile";	
+	<ASFF>;
+	while(my $line = <ASFF>){
+		#ID      IJC_SAMPLE_1    SJC_SAMPLE_1    IJC_SAMPLE_2    SJC_SAMPLE_2    IncFormLen      SkipFormLen
+		#0       4       21                      65      49
+		@tt = ();
+		@tt = split(/\t/, $line);
+		if($tt[1]!=0 or $tt[2]!=0){
+			$asNum++;
+		}
+	}
+	close ASFF;
+	return $asNum;
+}
+

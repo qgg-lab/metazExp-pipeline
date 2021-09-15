@@ -1,0 +1,90 @@
+#!/bin/bash
+#source $commonEnvir
+#source $paras
+
+source ../../00-config/commonEnvironmentVars.cfg
+source 00000.parameter.of.0000.job1.cfg 
+
+export speciesTaxonId=`pwd | awk -F '/' '{print $(NF-1)}'`
+export currDir=`pwd`
+
+############ inputs  #####################################
+# inputs:
+export sampleInforFile=$PWD/../$prepareLocalDataSrcDir/curated.experiment.tsv
+export genomeDb=$PWD/../$prepareLocalDataSrcDir/genome
+export gtfFile=$PWD/../$prepareLocalDataSrcDir/$cmbAnnoGtfFile
+export cDNAdb=$PWD/../$prepareLocalDataSrcDir/cDNA
+
+
+export taskPrefix="002_"$speciesTaxonId
+
+# specify script function
+export switchPsi=OFF
+export switchAssemble=ON
+# from paras
+
+
+############# outputs #######################################
+# outputs:
+export logOutputDir=$currDir/$logOutputDir
+export sbatchsDir=$currDir/$sbatchsDir
+export taskOutputDir=$currDir/$taskOutputDir
+export psiOutputDir=$currDir/$psiOutputDir
+export taskRunTimeDir=$currDir/$taskRunTimeDir
+export slurmLogOutputDir=$currDir/$slurmLogOutputDir
+export fastqOutputDir=$tmpBigOutputDir/$fastqOutputDir
+export manualDownloadDir=$currDir/$manualDownloadDir
+export firstSbmtAsmblCmdListFile=$currDir/$firstSbmtAsmblCmdListFile
+
+
+############### begin working ##############################
+mkdir -p $logOutputDir
+mkdir -p $sbatchsDir 
+mkdir -p $taskOutputDir
+mkdir -p $psiOutputDir
+mkdir -p $taskRunTimeDir
+mkdir -p $slurmLogOutputDir
+mkdir -p $fastqOutputDir
+mkdir -p $manualDownloadDir
+
+perl $customizedSoftwareDir/generate.sbatch.script.for.each.experiment.pl \
+	--taskPrefix $taskPrefix \
+	--sampleInfoTable $sampleInforFile \
+	--psiScript $customizedSoftwareDir/psi.in.experiment.pl \
+	--rMATSscript $softwareDir/rMATS.4.0.2/rMATS-turbo-Linux-UCS2/rmats.py \
+	--switchPsi $switchPsi \
+	--genomeDb $genomeDb \
+	--cDNAdb $cDNAdb \
+	--gtfFile $gtfFile \
+	--maxIntronSize $maxIntronSize \
+	--minIntronSize $minIntronSize \
+	--switchAssemble $switchAssemble \
+	--fastqOutputDir $fastqOutputDir \
+	--logOutputDir $logOutputDir \
+	--psiOutputDir $psiOutputDir \
+	--taskOutputDir $taskOutputDir \
+	--taskRunTimeLogDir $taskRunTimeDir \
+	--manualDownloadDir $manualDownloadDir \
+	--nodes 1 \
+	--ntasksPerNode 1 \
+	--cpusPerTask $cpusPerTask \
+	--memorySize $memorySize \
+	--pythonDir $softwareDir/Python-2.7.13/bin \
+	--pythonLibDir $softwareDir/Python-2.7.13/lib \
+	--hisat2Dir $softwareDir/hisat2-2.1.0 \
+	--stringtie1Dir $softwareDir/stringtie-1.3.5 \
+	--sratoolsDir $softwareDir/sraToolkit-2.9.4-1/bin \
+	--samtoolsDir $softwareDir/samtools-1.9/bin \
+	--lapackLibDir $softwareDir/lapack-3.8.0 \
+	--blasLibDir $softwareDir/BLAS-3.8.0 \
+	--runMinutesPerMillion $runMinutesPerMillion \
+	--sraLocalCacheDir $tmpCacheSraDir \
+	--outputSbatchDir $sbatchsDir
+
+rm -rf $firstSbmtAsmblCmdListFile
+
+ls -1 $sbatchsDir/* |while read id; do echo "sbatch -D $slurmLogOutputDir $id" >> $firstSbmtAsmblCmdListFile; done;
+
+chmod +x $firstSbmtAsmblCmdListFile
+
+#$firstSbmtAsmblCmdListFile

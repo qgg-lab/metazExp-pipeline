@@ -1,0 +1,29 @@
+#!/bin/bash
+source ../../00-config/commonEnvironmentVars.cfg
+#source $commonEnvir
+
+export currDir=`pwd`
+export combinedAssemblyList=$currDir/../004-combine-assemblies-and-annos/cutoff.info.of.assembled.experiment.tsv
+export combinedGtf=$currDir/../004-combine-assemblies-and-annos/$finalCmbTrsptAnnGtfFile
+export sampleInfoFile=$currDir/../004-combine-assemblies-and-annos/filtered.alignment.info.of.assembled.experiment.tsv
+
+:<<block
+grep -P "\ttranscript\t" $combinedGtf \
+	| awk -F '\t' '{print $2"; "$9}'  \
+	| awk -F ';' '{s=$1;for(i=2;i<=NF;i++){if(match($i, "transcript_id")){s=s$i}};print s;}' \
+	| awk -F ' ' '{print $1"\t"$3}' \
+	| sed -n 's/^\(.*\)\t"\(.*\)"$/\1\t\2/p' \
+	> $currDir/originNameMappingTrsptId.tsv \
+	2> $currDir/log.e.tag.trspt.origin
+block
+
+export currentAssemblyLinkDir=$currDir/assemblyDir
+mkdir -p $currentAssemblyLinkDir
+
+perl $customizedSoftwareDir/tag.experiment.tissue.study.info.to.combined.trspts.pl.20191016 \
+	--cmpRltListFile $currDir/compared.Rlt.list.txt \
+	--sampleInfoFile $sampleInfoFile \
+	--trsptOriginFile $currDir/originNameMappingTrsptId.tsv \
+	--outputTrsptOrignTissueExptListFile $currDir/trspt.with.orign.tissue.exptList.tsv \
+	--outputTrsptOrignStudyExptListFile $currDir/trspt.with.orign.study.exptList.tsv
+

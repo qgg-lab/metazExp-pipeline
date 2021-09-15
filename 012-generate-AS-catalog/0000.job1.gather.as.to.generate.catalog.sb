@@ -1,0 +1,138 @@
+#!/bin/bash
+source $commonEnvir
+source $paras
+source ../../00-config/commonEnvironmentVars.cfg
+source ./00000.parameter.of.0000.job1.cfg
+
+export currDir=`pwd`
+export taxonId=`pwd|awk -F '/' '{print $(NF-1)}'`
+
+ln -sf ../../$taxonId.old/012-generate-AS-catalog 012.old
+
+export psiOutputDir=$currDir/../008-pickup-psi-of-ASs-in-all-expers/psiOutputDir
+export selectedExptList=$currDir/../010-gather-alignment-info-of-all-expts/cutoff.info.of.assembled.experiment.tsv
+export cmplTrsptAnnoGtf=$currDir/../006-form-final-trspt-annotation/final.complete.trspt.anno.gtf
+# total
+export A5SSCatalog=$currDir/A5SS.catalog.txt
+export A3SSCatalog=$currDir/A3SS.catalog.txt
+export MXECatalog=$currDir/MXE.catalog.txt
+export RICatalog=$currDir/RI.catalog.txt
+export SECatalog=$currDir/SE.catalog.txt
+
+# JCEC
+export jcecA5SS=$currDir/jcec.A5SS.txt
+export jcecA3SS=$currDir/jcec.A3SS.txt
+export jcecMXE=$currDir/jcec.MXE.txt
+export jcecRI=$currDir/jcec.RI.txt
+export jcecSE=$currDir/jcec.SE.txt
+
+# JC
+export jcA5SS=$currDir/jc.A5SS.txt
+export jcA3SS=$currDir/jc.A3SS.txt
+export jcMXE=$currDir/jc.MXE.txt
+export jcRI=$currDir/jc.RI.txt
+export jcSE=$currDir/jc.SE.txt
+
+
+###############################################################################
+# 收集所有sample中的AS，然后再收集jcec和jc对应值
+perl $customizedSoftwareDir/gather.AS.and.psi.in.selected.samples.pl \
+	--psiOutputDir    $psiOutputDir  \
+	--inputExperimentList $selectedExptList \
+	--speciesAbbr $speciesAbbr \
+        --outputTotalA5SS  $A5SSCatalog \
+        --outputTotalA3SS  $A3SSCatalog \
+        --outputTotalSE    $SECatalog \
+        --outputTotalRI    $RICatalog \
+        --outputTotalMXE   $MXECatalog \
+        --outputJcecA5SS   $jcecA5SS \
+        --outputJcecA3SS   $jcecA3SS \
+        --outputJcecSE     $jcecSE \
+        --outputJcecRI     $jcecRI \
+        --outputJcecMXE    $jcecMXE \
+        --outputJcA5SS     $jcA5SS \
+        --outputJcA3SS     $jcA3SS \
+        --outputJcSE       $jcSE \
+        --outputJcRI       $jcRI \
+        --outputJcMXE      $jcMXE \
+	--outputGeneExpression $geneExpress \	
+        1> $currDir/log.o.gather.psi.in.all.exps \
+        2> $currDir/log.e.gather.psi.in.all.exps
+
+block
+
+sed -i 's/^\(.*\t\)chr\(.*\)\(\t\-.*\|+.*\)$/\1\2\3/' $A5SSCatalog
+sed -i 's/^\(.*\t\)chr\(.*\)\(\t\-.*\|+.*\)$/\1\2\3/' $A3SSCatalog
+sed -i 's/^\(.*\t\)chr\(.*\)\(\t\-.*\|+.*\)$/\1\2\3/' $SECatalog
+sed -i 's/^\(.*\t\)chr\(.*\)\(\t\-.*\|+.*\)$/\1\2\3/' $RICatalog
+sed -i 's/^\(.*\t\)chr\(.*\)\(\t\-.*\|+.*\)$/\1\2\3/' $MXECatalog
+
+###################################################################################
+perl /mnt/home/liujind1/software/customized/append.geneSymbol.to.As.pl \
+        --inputAsFileList $A3SSCatalog,$A5SSCatalog,$MXECatalog,$RICatalog,$SECatalog \
+        --inputGtfFileList $cmplTrsptAnnoGtf \
+        --outputAsFileList $currDir/new.A3SS.catalog,$currDir/new.A5SS.catalog,$currDir/new.MXE.catalog,$currDir/new.RI.catalog,$currDir/new.SE.catalog
+
+mv $A3SSCatalog $currDir/A3SS.catalog.withOut.part.geneSymbol
+mv $A5SSCatalog $currDir/A5SS.catalog.withOut.part.geneSymbol
+mv $MXECatalog $currDir/MXE.catalog.withOut.part.geneSymbol
+mv $RICatalog $currDir/RI.catalog.withOut.part.geneSymbol
+mv $SECatalog $currDir/SE.catalog.withOut.part.geneSymbol
+
+mv $currDir/new.A3SS.catalog $A3SSCatalog
+mv $currDir/new.A5SS.catalog $A5SSCatalog
+mv $currDir/new.MXE.catalog $MXECatalog
+mv $currDir/new.RI.catalog $RICatalog
+mv $currDir/new.SE.catalog $SECatalog
+
+
+#:<<block
+perl ~/software/customized/build.mapping.newAsId.to.oldAsId.pl \
+	--oldAsFileList 012.old/A3SS.catalog.txt,012.old/A5SS.catalog.txt,012.old/MXE.catalog.txt,012.old/RI.catalog.txt,012.old/SE.catalog.txt \
+	--newAsFileList A3SS.catalog.txt,A5SS.catalog.txt,MXE.catalog.txt,RI.catalog.txt,SE.catalog.txt \
+	--newAddedA3ssFile new.added.A3SS.catalog.txt \
+	--newAddedA5ssFile new.added.A5SS.catalog.txt \
+	--newAddedSeFile new.added.SE.catalog.txt \
+	--newAddedRiFile new.added.RI.catalog.txt \
+	--newAddedMxeFile new.added.MXE.catalog.txt \
+	--abbr $speciesAbbr \
+	--newAsIdToUniformAsIdTsv new.AS.id.to.uniform.AS.id.tsv \
+	--jcecFileList jcec.A3SS.txt,jcec.A5SS.txt,jcec.SE.txt,jcec.RI.txt,jcec.MXE.txt  \
+	--jcFileList jc.A3SS.txt,jc.A5SS.txt,jc.RI.txt,jc.MXE.txt,jc.SE.txt
+
+
+mv A3SS.catalog.txt A3SS.catalog.txt.origId
+mv A5SS.catalog.txt A5SS.catalog.txt.origId
+mv SE.catalog.txt SE.catalog.txt.origId
+mv RI.catalog.txt RI.catalog.txt.origId
+mv MXE.catalog.txt MXE.catalog.txt.origId
+
+ln -sf new.added.A3SS.catalog.txt A3SS.catalog.txt
+ln -sf new.added.A5SS.catalog.txt A5SS.catalog.txt
+ln -sf new.added.SE.catalog.txt SE.catalog.txt
+ln -sf new.added.RI.catalog.txt RI.catalog.txt
+ln -sf new.added.MXE.catalog.txt MXE.catalog.txt
+
+mv jcec.A3SS.txt jcec.A3SS.txt.origId
+mv jcec.A5SS.txt jcec.A5SS.txt.origId
+mv jcec.SE.txt jcec.SE.txt.origId
+mv jcec.RI.txt jcec.RI.txt.origId
+mv jcec.MXE.txt jcec.MXE.txt.origId
+mv jc.A3SS.txt jc.A3SS.txt.origId
+mv jc.A5SS.txt jc.A5SS.txt.origId
+mv jc.RI.txt jc.RI.txt.origId
+mv jc.MXE.txt jc.MXE.txt.origId
+mv jc.SE.txt jc.SE.txt.origId
+
+ln -sf jcec.A3SS.txt.with.uniformAs.tsv jcec.A3SS.txt
+ln -sf jcec.A5SS.txt.with.uniformAs.tsv jcec.A5SS.txt
+ln -sf jcec.SE.txt.with.uniformAs.tsv jcec.SE.txt
+ln -sf jcec.RI.txt.with.uniformAs.tsv jcec.RI.txt
+ln -sf jcec.MXE.txt.with.uniformAs.tsv jcec.MXE.txt
+
+ln -sf jc.A3SS.txt.with.uniformAs.tsv jc.A3SS.txt
+ln -sf jc.A5SS.txt.with.uniformAs.tsv jc.A5SS.txt
+ln -sf jc.SE.txt.with.uniformAs.tsv jc.SE.txt
+ln -sf jc.RI.txt.with.uniformAs.tsv jc.RI.txt
+ln -sf jc.MXE.txt.with.uniformAs.tsv jc.MXE.txt
+#block

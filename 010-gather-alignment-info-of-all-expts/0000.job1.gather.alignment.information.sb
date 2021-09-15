@@ -1,0 +1,38 @@
+#!/bin/bash
+source ./00000.parameter.of.0000.job1.cfg
+source ../../00-config/commonEnvironmentVars.cfg
+#source $commonEnvir
+#source $paras
+
+export currDir=`pwd`
+
+
+export assemblyDir=$currDir/../008-pickup-psi-of-ASs-in-all-expers/$psiOutputDir
+export curatedExptTsv=$currDir/../$prepareLocalDataSrcDir/curated.experiment.tsv
+export exptAlignInfoTsv=$currDir/alignment.info.of.assembled.experiment.tsv
+export filteredExptAignInfoTsv=$currDir/filtered.alignment.info.of.assembled.experiment.tsv
+export exptCutoffTsv=$currDir/cutoff.info.of.assembled.experiment.tsv
+
+# 提取参与组装experiment的测序及比对信息，然后输出
+perl $customizedSoftwareDir/obtain.alignment.information.of.all.experiment.pl \
+	--assemblyDir $assemblyDir \
+	--curatedExprimentTsv $curatedExptTsv \
+	--outputExptAlignInfoTsv $exptAlignInfoTsv \
+	1> $currDir/log.o.obtain.alignment.information.of.assembling.experiment \
+	2> $currDir/log.e.obtain.alignment.information.of.assembling.experiment
+
+# 提取所有组装的转录组文件（带有完整目录路径，可以直接使用)，并计算过滤新组装转录本的相关阈值
+# 输出格式：
+# 转录组文件名	测序数据量（GB）	转录本最低cov		外显子最低cov
+#../002-assemble-trsptome-on-goodExps/psiOutputDir/SRX1065909/transcriptomeByStringtie.gtf 	12	4    2
+#../002-assemble-trsptome-on-goodExps/psiOutputDir/SRXxxxx/transcriptomeByStringtie.gtf 	3	1    0.5
+
+perl $customizedSoftwareDir/extract.experiment.for.gather.AS.pl \
+	--assemblyDir $assemblyDir \
+	--assembledExptTsv $exptAlignInfoTsv \
+	--minAligPercentage $minAligPercentage \
+	--minMappedBase $minMappedBase \
+	--filteredAssembledExptTsv $filteredExptAignInfoTsv \
+	--outputExptCutoffTsv $exptCutoffTsv \
+	1> $currDir/log.o.generate.cutoffValue.for.filter.assembled.trspt\
+	2> $currDir/log.e.generate.cutoffValue.for.filter.assembled.trspt

@@ -1,0 +1,248 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+		"--dbName asdb \\\n" . 
+		"--dbUser lsas \\\n" . 
+		"--dbPWD njaulsas2019 \\\n" . 
+		"--species \"Bos taurus\" \\\n" .
+		"--inputGenomeFile ../001-prepare-local-datasource/genome.fa \\\n" .
+		"--inputAnnoGtfFile ./final.complete.trspt.anno.gtf \\\n" . 
+		"--inputProteinFileList ensembl.protein.fa,refseq.protein.fa \\\n" .
+		"--outputGeneDNAseqFile ./DNA.seq.fa \\\n" . 
+		"--outputGeneRNAseqFile ./RNA.seq.fa \\\n" .
+	print "Note: the annotated gtf file must be sorted by exon coordinate\n\n";
+	exit;
+}
+my ($dbName, $dbUser, $dbPWD);
+my ($species, $inputGenomeFile, $inputAnnoGtfFile);
+my ($inputProteinFileList, $outputGeneDNAseqFile, $outputGeneRNAseqFile);
+
+GetOptions(
+        'dbName=s'=>\$dbName,
+        'dbUser=s'=>\$dbUser,
+        'dbPWD=s'=>\$dbPWD,
+        'species=s'=>\$species,
+        'inputGenomeFile=s'=>\$inputGenomeFile,
+        'inputAnnoGtfFile=s'=>\$inputAnnoGtfFile,
+	'inputProteinFileList=s'=>\$inputProteinFileList,
+        'outputGeneDNAseqFile=s'=>\$outputGeneDNAseqFile,
+        'outputGeneRNAseqFile=s'=>\$outputGeneRNAseqFile,
+);
+
+my $dbh = DBI->connect("DBI:mysql:database=$dbName", $dbUser, $dbPWD);
+my $query;
+#my $query = $dbh->prepare("create table isoformTable(isoformId char(50) not null, species char(50) not null, isoformSymbol char(50) default \"\", geneId char(50) default \"\", geneSymbol char(50) default \"NA\", chr varchar(50) default \"\", strand char(1) default \"+\", exonSeries varchar(1000) default \"\", RNAsequence text default \"\", DNAsequence text default \"\", proteinSequence varchar(10000) default \"\", annoOrigin varchar(50) default \"ensembl\", isoformPfam varchar(200) default \"\", isoformGo varchar(200) default \"\", primary key(isoformId, species));");
+#$query->execute();
+
+my (%genomeSeq, $line, @tt, $id);
+open FF, "<$inputGenomeFile";
+while($line = <FF>){
+        chomp($line);
+        if($line=~/>/){
+                @tt = ();
+                @tt = split(/ /, $line);
+                if($tt[0]=~/>ref\|(.*?)\|/ or $tt[0]=~/>gi.*\|ref\|(.*?)\|/ or  $tt[0]=~/>(.*)/){
+                        $id = $1;
+                }
+        }else{
+                ${$genomeSeq{$id}}{"seq"} .=uc($line);
+        }
+}
+close FF;
+
+print "load genome finished\n";
+print ">1\n";
+print  ${$genomeSeq{"1"}}{"seq"} . "\n";
+<STDIN>;
+
+# load inputProtein into hash
+my (%proteinSeq);
+my @proteinFile = split(/,/, $inputProteinFileList);
+foreach my $proteinFile(@proteinFile){
+	open PP, "<$proteinFile";
+	while($line = <PP>){
+	        chomp($line);
+        	if($line=~/>/){
+	                @tt = ();
+        	        @tt = split(/ /, $line);
+			$id = substr($tt[0], 1);
+	        }else{
+                	${$proteinSeq{$id}}{"seq"} .=uc($line);
+        	}
+	}
+	close PP;
+}
+print "load protein files finished.\n";
+<STDIN>;
+##############################
+#			     #
+# load isoform into hash     #
+#			     #
+##############################
+my (%isoform, $geneId, $geneSymbol, $isoformId, $isoformSymbol);
+my ($featureLine, @cols);
+
+open FF, "<$inputAnnoGtfFile";
+
+while($featureLine = <FF>){
+	chomp($featureLine);
+	next if($featureLine=~/#/);
+	@cols = split(/\t/, $featureLine);
+
+	$geneId = &getGeneIdInAttrs($cols[8]);
+	$geneSymbol = &getGeneSymbolInAttrs($cols[8]);
+	$isoformId = &getIsoformIdInAttrs($cols[8]);
+	$isoformSymbol = &getIsoformSymbolInAttrs($cols[8]);
+
+	#register isoform chr, strand, start, end and origin
+	if($cols[2] eq "transcript"){
+		${$isoform{$isoformId}}{"chr"} = $cols[0];
+		${$isoform{$isoformId}}{"strand"} = $cols[6];
+		${$isoform{$isoformId}}{"start"} = $cols[3];
+		${$isoform{$isoformId}}{"end"} = $cols[4];
+		${$isoform{$isoformId}}{"geneId"} = $geneId;
+		${$isoform{$isoformId}}{"geneSymbol"} = $geneSymbol;
+		${$isoform{$isoformId}}{"isoformSymbol"} = $isoformSymbol;
+		if($cols[1] eq "StringTie"){
+			${$isoform{$isoformId}}{"annoOrigin"} = "RNAseq";
+		}else{
+			${$isoform{$isoformId}}{"annoOrigin"} = $cols[1];
+		}
+	}elsif($cols[2] eq "exon"){
+
+		${$isoform{$isoformId}}{"exonSeries"} .= $cols[3] . ".." . $cols[4] . ",";
+
+		if($cols[6] eq "+"){
+			${$isoform{$isoformId}}{"RNAseq"} .= uc(substr($genomeSeq{$cols[0]}, $cols[3] - 1, $cols[4] - $cols[3] + 1));
+		}else{
+			my $exonSeq = uc(substr($genomeSeq{$cols[0]}, $cols[3] - 1, $cols[4] - $cols[3] + 1));
+			$exonSeq = reverse($exonSeq);
+			$exonSeq=~tr/ACGT/TGCA/;
+			${$isoform{$isoformId}}{"RNAseq"} .= $exonSeq;
+		}
+	}
+}
+close FF;
+ 
+print "load gtf file finished.\n";
+<STDIN>;
+
+# generate DNA seq for isoform and distinguish intron and exon
+open RNA, ">$outputGeneRNAseqFile";
+open DNA, ">$outputGeneDNAseqFile";
+my (@isoformId, @exonIntron, @tmpExon, @exon, $exon);
+@isoformId = keys(%isoform);
+
+foreach $isoformId(@isoformId){
+
+	# process exonSeries to cut final comma
+	${$isoform{$isoformId}}{"exonSeries"} = substr(${$isoform{$isoformId}}{"exonSeries"}, 0, length(${$isoform{$isoformId}}{"exonSeries"})-1);
+
+	# to generate exon
+	@tmpExon = ();
+	@tmpExon = split(/,/, ${$isoform{$isoformId}}{"exonSeries"});
+	my $exonNum=0;
+	foreach $exon(@tmpExon){
+		if($exon=~/(\d+)\.\.(\d+)/){
+			$exon[$exonNum][0]= $1;
+			$exon[$exonNum][1]= $2;
+			$exonNum++;
+		}
+	}
+
+	# to generate exon and intron sequence
+	${$isoform{$isoformId}}{"DNAseq"} .= uc(substr($genomeSeq{${$isoform{$isoformId}}{"chr"}}, $exon[0][0] -1, $exon[0][1] - $exon[0][0]+1));
+	for(my $i=1; $i<=$#exon; $i++){
+		${$isoform{$isoformId}}{"DNAseq"} .= lc(substr($genomeSeq{${$isoform{$isoformId}}{"chr"}}, ($exon[$i-1][1] + 1) - 1, ($exon[$i][0] - 1) - ($exon[$i-1][1] + 1) + 1));
+		${$isoform{$isoformId}}{"DNAseq"} .= uc(substr($genomeSeq{${$isoform{$isoformId}}{"chr"}}, $exon[$i][0] -1, $exon[$i][1] - $exon[$i][0]+1));
+	}
+
+	# output RNAseq, DNAseq into files
+	print RNA ">" . $isoformId . " ". ${$isoform{$isoformId}}{"isoformSymbol"} . " " . ${$isoform{$isoformId}}{"geneId"} . " " . ${$isoform{$isoformId}}{"geneSymbol"} . "\n";
+	print RNA ${$isoform{$isoformId}}{"RNAseq"} . "\n";
+	print DNA ">" . $isoformId . " " . ${$isoform{$isoformId}}{"isoformSymbol"} . " " . ${$isoform{$isoformId}}{"geneId"} . " " . ${$isoform{$isoformId}}{"geneSymbol"} . "\n";
+	print DNA ${$isoform{$isoformId}}{"DNAseq"} . "\n";
+
+	# load isoform into mysql database
+	$query = $dbh->prepare("insert into isoformTable (isoformId, species, isoformSymbol, geneId, geneSymbol, chr, strand, exonSeries, RNAsequence, NDAsequence, proteinSequence, annoOrigin) values (\"$isoformId\", \"$species\", \"" . ${$isoform{$isoformId}}{"isoformSymbol"} . "\", \"$geneId\", \"" . ${$isoform{$isoformId}}{"geneSymbol"} . "\", \"" . ${$isoform{$isoformId}}{"chr"} . "\", \"" . ${$isoform{$isoformId}}{"strand"} . "\", \"" . ${$isoform{$isoformId}}{"exonSeries"} . "\", \"" . ${$isoform{$isoformId}}{"RNAseq"} . "\", \"" . ${$isoform{$isoformId}}{"DNAseq"} . "\", \"" . $proteinSeq{$isoformId} . "\", \"" . ${$isoform{$isoformId}}{"annoOrigin"} . "\")");
+	print "insert into isoformTable (isoformId, species, isoformSymbol, geneId, geneSymbol, chr, strand, exonSeries, RNAsequence, NDAsequence, proteinSequence, annoOrigin) values (\"$isoformId\", \"$species\", \"" . ${$isoform{$isoformId}}{"isoformSymbol"} . "\", \"$geneId\", \"" . ${$isoform{$isoformId}}{"geneSymbol"} . "\", \"" . ${$isoform{$isoformId}}{"chr"} . "\", \"" . ${$isoform{$isoformId}}{"strand"} . "\", \"" . ${$isoform{$isoformId}}{"exonSeries"} . "\", \"" . ${$isoform{$isoformId}}{"RNAseq"} . "\", \"" . ${$isoform{$isoformId}}{"DNAseq"} . "\", \"" . $proteinSeq{$isoformId} . "\", \"" . ${$isoform{$isoformId}}{"annoOrigin"} . "\")\n";
+	<STDIN>;
+}
+
+close RNA;
+close DNA;
+
+
+sub getGeneIdInAttrs{
+        my ($attrsString) = $_[0];
+        my (@attrs, $attr);
+        @attrs = split(/;/, $attrsString);
+        foreach $attr(@attrs){
+                if($attr=~/gene_id "(.*)"/){
+                        return $1;
+                }
+        }
+        return "NA";
+}
+
+sub getIsoformIdInAttrs{
+        my ($attrsString) = $_[0];
+        my (@attrs, $attr);
+        @attrs = split(/;/, $attrsString);
+        foreach $attr(@attrs){
+                if($attr=~/transcript_id "(.*)"/){
+                        return $1;
+                }
+        }
+        return "NA";
+}
+
+
+sub getGeneSymbolInAttrs{
+        my ($attrsString) = $_[0];
+        my (@attrs, $attr);
+        @attrs = split(/;/, $attrsString);
+        foreach $attr(@attrs){
+                if($attr=~/gene_name "(.*)"/){
+                        return $1;
+                }
+        }
+        return "NA";
+}
+
+sub getIsoformSymbolInAttrs{
+        my ($attrsString) = $_[0];
+        my (@attrs, $attr);
+        @attrs = split(/;/, $attrsString);
+        foreach $attr(@attrs){
+                if($attr=~/transcript_name "(.*)"/){
+                        return $1;
+                }
+        }
+        return "NA";
+}
+
+
+
+sub getGeneIdInMultipleFeatures{
+        my ($multipleFeatureText) = $_[0];
+        my (@featureLines, $featureLine, @attrs);
+
+        @featureLines = split(/\n/, $multipleFeatureText);
+
+        foreach $featureLine(@featureLines){
+
+                @attrs = ();
+                @attrs = split(/;/, $featureLine);
+                foreach my $attr(@attrs){
+                        if($attr=~/gene_id "(.*)"/){
+                                return $1;
+                        }
+                }
+
+        }
+        return "";
+}

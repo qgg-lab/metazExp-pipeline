@@ -1,0 +1,37 @@
+#!/bin/bash
+source ../../00-config/commonEnvironmentVars.cfg
+source $commonEnvir
+export currDir=`pwd`
+
+############## inputs #################
+export cmplTrsptAnnoGtf=$currDir/../$formFinalTrsptAnnoDir/$cmplTrsptAnnoGtf
+export genomeFaFile=$currDir/../$prepareLocalDataSrcDir/genome.fa
+
+############# outputs #################
+export cmplGenomeDb=$currDir/$cmplGenomeDb
+export threadNum=18
+
+############ begin #####################
+
+# build genome database
+$python2 $hisat2Dir/hisat2_extract_splice_sites.py \
+	$cmplTrsptAnnoGtf \
+	> $currDir/splicesites.txt \
+	2> $currDir/log.e.extract.spliceSite.from.combined.gtf
+
+$python2 $hisat2Dir/hisat2_extract_exons.py \
+        $cmplTrsptAnnoGtf \
+	> $currDir/exons.txt \
+	2> $currDir/log.e.extract.exon.from.combined.gtf
+
+# build genome database
+$hisat2Dir/hisat2-build \
+	--ss $currDir/splicesites.txt \
+	--exon $currDir/exons.txt  \
+	-p $threadNum \
+	$genomeFaFile \
+	$cmplGenomeDb \
+	1> $currDir/log.o.hisat2.build.cmplGenomeDb \
+	2> $currDir/log.e.hisat2.build.cmplGenomeDb
+
+touch finished

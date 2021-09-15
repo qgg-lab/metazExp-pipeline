@@ -1,0 +1,436 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use List::Util qw/sum/;
+use List::Util qw/max min/;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+                "--inputAsFile \\\n" .
+                "--inputAsPsiFile \\\n" .
+                "--inputExperimentFile \\\n" .
+		"--outputAsGff3 \\\n" .
+		"--outputAsGtf";
+	exit;
+}
+
+my ($inputAsFile, $inputAsPsiFile, $inputExperimentFile, $outputAsGff3, $outputAsGtf);
+
+GetOptions(
+        'inputAsFile=s'=>\$inputAsFile,
+        'inputAsPsiFile=s'=>\$inputAsPsiFile,
+        'inputExperimentFile=s'=>\$inputExperimentFile,
+        'outputAsGff3=s'=>\$outputAsGff3,
+	'outputAsGtf=s'=>\$outputAsGtf,
+);
+
+# 将experiment信息读入，获得experiment->tissue的hash
+my (%exptToTissue, $exptToTissueHref, @tt, $exptId, $tissue);
+my ($fieldNameString, @fieldName, $valueString, @value, $i, %tmpHash, $tmpHash, $line);
+$exptToTissueHref = \%exptToTissue;
+$tmpHash = \%tmpHash;
+open FF, "<$inputExperimentFile";
+while($line=<FF>){
+	chomp($line);
+	($fieldNameString, $valueString) = split(/_____/, $line);
+	@fieldName = ();
+	@fieldName = split(/, /, $fieldNameString);
+	@value = ();
+	@value = split(/, /, $valueString);
+	%tmpHash = ();
+	for($i=0; $i<=$#fieldName; $i++){
+		$tmpHash->{$fieldName[$i]} = $value[$i];
+	}
+	@tt = ();
+	@tt = split(/"/, $tmpHash->{"experimentId"});
+	$exptId = $tt[1];
+	@tt = ();
+	@tt = split(/"/, $tmpHash->{"tissue"});
+	$tissue = $tt[1];
+	$tissue=~s/ /_/;
+	$exptToTissueHref->{$exptId} = $tissue;
+}
+close FF;
+
+# print "Finish load experiment information.\n";
+
+# 将psi值按照as->tissue = psiList
+my (%asToTissueToPsiList, $asToTissueToPsiList, $asId);
+$asToTissueToPsiList = \%asToTissueToPsiList;
+open FF, "<$inputAsPsiFile";
+while($line=<FF>){
+	chomp($line);
+	($fieldNameString, $valueString) = split(/_____/, $line);
+        @fieldName = ();
+        @fieldName = split(/, /, $fieldNameString);
+        @value = ();
+        @value = split(/, /, $valueString);
+        %tmpHash = ();
+        for($i=0; $i<=$#fieldName; $i++){
+                $tmpHash->{$fieldName[$i]} = $value[$i];
+        }
+	@tt = ();
+#	print "asId: " .$tmpHash->{"asId"};
+#	#<STDIN>;
+	@tt= split(/"/, $tmpHash->{"asId"});
+	$asId = $tt[1];
+#	print "experiment: " . $tmpHash->{"experiment"};
+#	#<STDIN>;
+	@tt = ();
+	@tt = split(/"/, $tmpHash->{"experiment"});
+	$exptId = $tt[1];
+#	print join("\t", "asId:", $asId, "experiment:", $exptId, "tissue:", $exptToTissueHref->{$exptId}, "psi:", $tmpHash->{"JCECpsi"});
+#	#<STDIN>;
+	if(not exists($asToTissueToPsiList->{$asId}->{$exptToTissueHref->{$exptId}})){
+		$asToTissueToPsiList->{$asId}->{$exptToTissueHref->{$exptId}} =  $tmpHash->{"JCECpsi"};
+	}else{
+		$asToTissueToPsiList->{$asId}->{$exptToTissueHref->{$exptId}} .= "," . $tmpHash->{"JCECpsi"};
+	}
+}
+
+# print "Finish load psi information.\n";
+
+# 读取as，并且提取每个 tissue，计算每个tissue的psi最大值，最小值和平均值
+# 生成外显子结构
+my (%tissueToPsi, $tissueToPsi, $asType, $strand, $chr, @tissue, $tissue, @psi, $gtfTissuePsiAttrs, $gffTissuePsiAttrs, $asStart, $asStop);
+open FF, "<$inputAsFile";	
+open GFF, ">$outputAsGff3";
+open GTF, ">$outputAsGtf";
+while($line=<FF>){
+#	print $line;
+        chomp($line);
+        ($fieldNameString, $valueString) = split(/_____/, $line);
+        @fieldName = ();
+        @fieldName = split(/, /, $fieldNameString);
+        @value = ();
+        @value = split(/, /, $valueString);
+        %tmpHash = ();
+        for($i=0; $i<=$#fieldName; $i++){
+		if($fieldName[$i]=~/"(.*)"/){
+			$fieldName[$i] = $1;
+		}
+		if($value[$i]=~/"(.*)"/){
+			$value[$i] = $1;
+		}
+                $tmpHash->{$fieldName[$i]} = $value[$i];
+        }
+	%tissueToPsi = ();
+	$tissueToPsi = \%tissueToPsi;
+	$asId = $tmpHash->{"asId"};
+	$asType = $tmpHash->{"asType"};
+	$chr = $tmpHash->{"chr"};
+	$strand = $tmpHash->{"strand"};
+#	print "asId:" . $asId . "\n";
+#	print "asType:" . $asType . "\n";
+#	print "chr:" . $chr . "\n";
+#	print "strand:" . $strand . "\n";
+	#<STDIN>;
+	# 计算AS被检测到psi值在各个tissue中最大值，最小值，平均值情况
+	$gffTissuePsiAttrs = "";
+	$gtfTissuePsiAttrs = "";
+	@tissue = ();
+	if(exists($asToTissueToPsiList->{$asId})){
+		@tissue = keys($asToTissueToPsiList->{$asId});
+		foreach $tissue(@tissue){
+			@psi = ();
+			@psi = split(/,/, $asToTissueToPsiList->{$asId}->{$tissue});
+#			print "@psi";
+#			print "\n";
+			$tissueToPsi->{$tissue}->{"maxPsi"} = max @psi;
+			$tissueToPsi->{$tissue}->{"minPsi"} = min @psi;
+			$tissueToPsi->{$tissue}->{"meanPsi"} = sum(@psi)/($#psi + 1);
+#			print "$tissue max:" . $tissueToPsi->{$tissue}->{"maxPsi"};
+			#<STDIN>;
+#			print "$tissue min:" . $tissueToPsi->{$tissue}->{"minPsi"};
+			#<STDIN>;
+#			print $tissue . "mean:" .$tissueToPsi->{$tissue}->{"meanPsi"};
+			#<STDIN>;
+			if($gffTissuePsiAttrs eq ""){
+				$gffTissuePsiAttrs = $tissue . "=" . "max:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"maxPsi"}) . ",min:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"minPsi"}) . ",mean:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"meanPsi"});
+				$gtfTissuePsiAttrs = $tissue . " \"max:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"maxPsi"}) . ",min:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"minPsi"}) . ",mean:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"meanPsi"}) . "\"";
+			}else{
+				$gffTissuePsiAttrs .= ";" . $tissue . "=" . "max:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"maxPsi"}) . ",min:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"minPsi"}) . ",mean:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"meanPsi"});
+				$gtfTissuePsiAttrs .= " ;" . $tissue . " \"max:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"maxPsi"}) . ",min:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"minPsi"}) . ",mean:" . sprintf("%.2f", $tissueToPsi->{$tissue}->{"meanPsi"}) . "\"";
+			}
+		}
+	}else{
+		print $asId . " has no psi.\n";
+#		<STDIN>;
+	}
+#	print "gffTissuePsiAttrs:$gffTissuePsiAttrs\n";
+#	print "gtfTissuePsiAttrs:$gtfTissuePsiAttrs\n";
+	#<STDIN>;
+	# 生成AS的gtf格式
+	$asStart = 0;
+	$asStop = 0;
+
+
+#################### A3SS #############################
+	if($asType eq "A3SS"){
+		$asStart = min(($tmpHash->{"longExonStart_0base"}+1, $tmpHash->{"longExonEnd"}, $tmpHash->{"shortES"}+1, $tmpHash->{"shortEE"}, $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}));
+		$asStop = max(($tmpHash->{"longExonStart_0base"}+1, $tmpHash->{"longExonEnd"}, $tmpHash->{"shortES"}+1, $tmpHash->{"shortEE"}, $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}));
+
+
+################ GFF3格式  ###############
+	######### 1: 输出AS事件  #########
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "ID=$asId;AsType=$asType;geneId=" . $tmpHash->{"geneID"} . ";$gffTissuePsiAttrs\n");
+
+	######### 2.1: 输出longAlt #######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.long" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=long\n");
+		# 2.2: 输出long exon
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}, ".", $strand, ".", "ID=$asId.long.flankingExon" . ";Parent=$asId.long;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"longExonStart_0base"}+1, $tmpHash->{"longExonEnd"}, ".", $strand, ".", "ID=$asId.longExon" . ";Parent=$asId.long;geneId=" . $tmpHash->{"geneID"} . ";\n");
+
+	######### 3.1: 输出shortAlt ######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "ASAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.short" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=short\n");
+		# 3.2: 输出shortexon
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}, ".", $strand, ".", "ID=$asId.short.flankingExon" . ";Parent=$asId.short;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"shortES"}+1, $tmpHash->{"shortEE"}, ".", $strand, ".", "ID=$asId.shortExon" . ";Parent=$asId.short;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			
+################ GTF格式   #################
+	######### 1: 输出AS事件  ###########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; as_type \"$asType\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; $gtfTissuePsiAttrs\n");
+
+	######### 2.1: 输出longAlt ########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.long\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"long\"\n");
+		# 2.2: 输出long exon
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.long\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.long.flankingExon\"\n");
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"longExonStart_0base"}+1, $tmpHash->{"longExonEnd"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.long\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.long.longExon\"\n");
+
+	######### 3.1: 输出shortAlt  #######
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.short\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"short\"\n");
+		# 3.2: 输出short exon
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.short\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.short.flankingExon\"\n");
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"shortES"}+1, $tmpHash->{"shortEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.short\"; gene_id \"" . $tmpHash->{"geneID"}. "\"; exon_id \"$asId.short.shortExon\"\n");
+	}
+
+
+##################  A5SS #############################################
+	if($asType eq "A5SS"){
+		$asStart = min(($tmpHash->{"longExonStart_0base"}+1, $tmpHash->{"longExonEnd"}, $tmpHash->{"shortES"}+1, $tmpHash->{"shortEE"}, $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}));
+		$asStop = max(($tmpHash->{"longExonStart_0base"}+1, $tmpHash->{"longExonEnd"}, $tmpHash->{"shortES"}+1, $tmpHash->{"shortEE"}, $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}));
+
+
+################ GFF3格式  ###############
+	######### 1: 输出AS事件  #########
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "ID=$asId;AsType=$asType;geneId=" . $tmpHash->{"geneID"} . ";$gffTissuePsiAttrs\n");
+
+	######### 2.1: 输出longAlt #######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.long" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=long\n");
+		# 2.2: 输出long exon
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"longExonStart_0base"}+1, $tmpHash->{"longExonEnd"}, ".", $strand, ".", "ID=$asId.longExon" . ";Parent=$asId.long;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}, ".", $strand, ".", "ID=$asId.long.flankingExon" . ";Parent=$asId.long;geneId=" . $tmpHash->{"geneID"} . ";\n");
+
+	######### 3.1: 输出shortAlt ######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.short" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=short\n");
+		# 3.2: 输出shortexon
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"shortES"}+1, $tmpHash->{"shortEE"}, ".", $strand, ".", "ID=$asId.shortExon" . ";Parent=$asId.short;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}, ".", $strand, ".", "ID=$asId.short.flankingExon" . ";Parent=$asId.short;geneId=" . $tmpHash->{"geneID"} . ";\n");
+
+
+################ GTF格式   #################
+	######### 1: 输出AS事件  ###########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; as_type \"$asType\"; gene_id \"" . $tmpHash->{"geneID"}. "\"; $gtfTissuePsiAttrs\n");
+
+	######### 2.1: 输出longAlt ########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.long\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"long\"\n");
+		# 2.2: 输出long exon
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"longExonStart_0base"}+1, $tmpHash->{"longExonEnd"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.long\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.long.longExon\"\n");
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.long\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.long.flankingExon\"\n");
+
+
+	######### 3.1: 输出shortAlt  #######
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.short\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"short\"\n");
+		# 3.2: 输出short exon
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"shortES"}+1, $tmpHash->{"shortEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.short\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.short.shortExon\"\n");
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"flankingES"}+1, $tmpHash->{"flankingEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.short\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.short.flankingExon\"\n");
+	}
+
+
+
+###############  RI #################################
+	if($asType eq "RI"){
+		$asStart = $tmpHash->{"riExonStart_0base"}+1;
+		$asStop = $tmpHash->{"riExonEnd"};
+
+################ GFF3格式  ###############
+	######### 1: 输出AS事件  #########
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "ID=$asId;AsType=$asType;geneId=" . $tmpHash->{"geneID"} . ";$gffTissuePsiAttrs\n");
+
+	######### 2.1: 输出includedIntron #######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.includedIntron" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=includedIntron\n");
+		# 2.2: 输出exon
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"riExonStart_0base"}+1, $tmpHash->{"riExonEnd"}, ".", $strand, ".", "ID=$asId.includedIntron.riExon" . ";Parent=$asId.includedIntron;geneId=" . $tmpHash->{"geneID"} . ";\n");
+
+	######### 3.1: 输出excludedIntron ######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.excludedIntron" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=excludedIntron\n");
+		# 3.2: 输出exon
+		if($strand eq "+"){
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.excludedIntron.upstreamExon" . ";Parent=$asId.excludedIntron;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.excludedIntron.downstreamExon" . ";Parent=$asId.excludedIntron;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		}else{
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.excludedIntron.downstreamExon" . ";Parent=$asId.excludedIntron;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.excludedIntron.upstreamExon" . ";Parent=$asId.excludedIntron;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		}	
+
+################ GTF格式   #################
+	######### 1: 输出AS事件  ###########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; as_type \"$asType\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; $gtfTissuePsiAttrs\n");
+
+	######### 2.1: includedIntron ########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.includedIntron\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"includedIntron\"\n");
+		# 2.2: 输出exon
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"riExonStart_0base"}+1, $tmpHash->{"riExonEnd"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.includedIntron\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.includedIntron.riExon\"\n");
+
+
+	######### 3.1: excludedIntron  #######
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.excludedIntron\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"excludedIntron\"\n");
+		# 3.2: 输出exon
+		if($strand eq "+"){
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.excludedIntron\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.excludedIntron.upstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.excludedIntron\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.excludedIntron.downstreamExon\"\n");
+		}else{
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.excludedIntron\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.excludedIntron.downstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.excludedIntron\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.excludedIntron.upstreamExon\"\n");
+		}
+	}
+
+
+############### SE  ###################
+	if($asType eq "SE"){
+		$asStart = $tmpHash->{"upstreamES"} + 1;
+		$asStop = $tmpHash->{"downstreamEE"} + 1;
+
+################ GFF3格式  ###############
+	######### 1: 输出AS事件  #########
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "ID=$asId;AsType=$asType;geneId=" . $tmpHash->{"geneID"} . ";$gffTissuePsiAttrs\n");
+
+	######### 2.1: 输出inclusion Alt #######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.inclusion" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=inclusion\n");
+		# 2.2: 输出exon
+		if($strand eq "+"){
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.inclusion.upstreamExon" . ";Parent=$asId.inclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"exonStart_0base"}+1, $tmpHash->{"exonEnd"}, ".", $strand, ".", "ID=$asId.inclusion.exon" . ";Parent=$asId.inclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.inclusion.downstreamExon" . ";Parent=$asId.inclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		}else{
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.inclusion.downstreamExon" . ";Parent=$asId.inclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"exonStart_0base"}+1, $tmpHash->{"exonEnd"}, ".", $strand, ".", "ID=$asId.inclusion.exon" . ";Parent=$asId.inclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.inclusion.upstreamExon" . ";Parent=$asId.inclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		}
+
+	######### 3.1: 输出exclusionAlt ######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.exclusion" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=exclusion\n");
+		# 3.2: 输出exon
+		if($strand eq "+"){
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.exclusion.upstreamExon" . ";Parent=$asId.exclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.exclusion.downstreamExon" . ";Parent=$asId.exclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		}else{
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.exclusion.downstreamExon" . ";Parent=$asId.exclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.exclusion.upstreamExon" . ";Parent=$asId.exclusion;geneId=" . $tmpHash->{"geneID"} . ";\n");
+
+		}
+			
+
+################ GTF格式   #################
+	######### 1: 输出AS事件  ###########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; as_type \"$asType\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; $gtfTissuePsiAttrs\n");
+
+	######### 2.1: 输出inclusionAlt ########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.inclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"inclusion\"\n");
+		# 2.2: 输出exon
+		if($strand eq "+"){
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.inclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.inclusion.upstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"exonStart_0base"}+1, $tmpHash->{"exonEnd"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.inclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.inclusion.exon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.inclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.inclusion.downstreamExon\"\n");
+		}else{
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.inclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.inclusion.downstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"exonStart_0base"}+1, $tmpHash->{"exonEnd"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.inclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.inclusion.exon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.inclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.inclusion.upstreamExon\"\n");
+		}
+
+	######### 3.1: 输出exclusionAlt  #######
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.exclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"exclusion\"\n");
+		# 3.2: 输出short exon
+		if($strand eq "+"){
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.exclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.exclusion.upstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.exclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.exclusion.downstreamExon\"\n");
+		}else{
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.exclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.exclusion.downstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.exclusion\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.exclusion.upstreamExon\"\n");
+		}
+	}
+
+
+
+
+############### MXE  ###################
+	if($asType eq "MXE"){
+		$asStart = $tmpHash->{"upstreamES"} + 1;
+		$asStop = $tmpHash->{"downstreamEE"} + 1;
+
+################ GFF3格式  ###############
+	######### 1: 输出AS事件  #########
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "ID=$asId;AsType=$asType;geneId=" . $tmpHash->{"geneID"} . ";$gffTissuePsiAttrs\n");
+
+	######### 2.1: 输出1st Alt #######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.1st" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=1st\n");
+		# 2.2: 输出exon
+		if($strand eq "+"){
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.1st.upstreamExon" . ";Parent=$asId.1st;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"1stExonStart_0base"}+1, $tmpHash->{"1stExonEnd"}, ".", $strand, ".", "ID=$asId.1st.1stExon" . ";Parent=$asId.1st;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.1st.downstreamExon" . ";Parent=$asId.1st;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		}else{
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.1st.downstreamExon" . ";Parent=$asId.1st;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"1stExonStart_0base"}+1, $tmpHash->{"1stExonEnd"}, ".", $strand, ".", "ID=$asId.1st.1stExon" . ";Parent=$asId.1st;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.1st.upstreamExon" . ";Parent=$asId.1st;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		}
+
+	######### 3.1: 输出exclusionAlt ######
+		print GFF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "ID=$asId.2nd" . ";Parent=$asId;geneId=" . $tmpHash->{"geneID"} . ";Alt=2nd\n");
+		# 3.2: 输出exon
+		if($strand eq "+"){
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.2nd.upstreamExon" . ";Parent=$asId.2nd;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"2ndExonStart_0base"}+1, $tmpHash->{"2ndExonEnd"}, ".", $strand, ".", "ID=$asId.2nd.2ndExon" . ";Parent=$asId.2nd;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.2nd.downstreamExon" . ";Parent=$asId.2nd;geneId=" . $tmpHash->{"geneID"} . ";\n");
+		}else{
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "ID=$asId.2nd.downstreamExon" . ";Parent=$asId.2nd;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"2ndExonStart_0base"}+1, $tmpHash->{"2ndExonEnd"}, ".", $strand, ".", "ID=$asId.2nd.2ndExon" . ";Parent=$asId.2nd;geneId=" . $tmpHash->{"geneID"} . ";\n");
+			print GFF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "ID=$asId.2nd.upstreamExon" . ";Parent=$asId.2nd;geneId=" . $tmpHash->{"geneID"} . ";\n");
+
+		}
+			
+
+################ GTF格式   #################
+	######### 1: 输出AS事件  ###########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsEvent", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; as_type \"$asType\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; $gtfTissuePsiAttrs\n");
+
+	######### 2.1: 输出1stAlt ########
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.1st\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"1st\"\n");
+		# 2.2: 输出exon
+		if($strand eq "+"){
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.1st\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.1st.upstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"1stExonStart_0base"}+1, $tmpHash->{"1stExonEnd"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.1st\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.1st.1stExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.1st\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.1st.downstreamExon\"\n");
+		}else{
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.1st\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.1st.downstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"1stExonStart_0base"}+1, $tmpHash->{"1stExonEnd"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.1st\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.1st.1stExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.1st\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.1st.upstreamExon\"\n");
+		}
+
+	######### 3.1: 输出2ndAlt  #######
+		print GTF join("\t", $tmpHash->{"chr"}, "aslive", "AsAlt", $asStart, $asStop, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.2nd\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; alt \"2nd\"\n");
+		# 3.2: 输出exon
+		if($strand eq "+"){
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.2nd\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.2nd.upstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"2ndExonStart_0base"}+1, $tmpHash->{"2ndExonEnd"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.2nd\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.2nd.2ndExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.2nd\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.2nd.downstreamExon\"\n");
+		}else{
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"downstreamES"}+1, $tmpHash->{"downstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.2nd\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.2nd.downstreamExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"2ndExonStart_0base"}+1, $tmpHash->{"2ndExonEnd"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.2nd\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.2nd.2ndExon\"\n");
+			print GTF join("\t", $tmpHash->{"chr"}, "aslive", "exon", $tmpHash->{"upstreamES"}+1, $tmpHash->{"upstreamEE"}, ".", $strand, ".", "as_id \"$asId\"; alt_id \"$asId.2nd\"; gene_id \"" . $tmpHash->{"geneID"} . "\"; exon_id \"$asId.2nd.upstreamExon\"\n");
+		}
+	}
+}
+close FF;
+close GFF;
+close GTF;

@@ -1,0 +1,59 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+                "--finalCdnaFasta final.cdna.fa \\\n" .
+                "--pepOfEnsemblTrsptFasta ensembl.pep.fa \\\n" .
+                "--cDNAOfNewAssembledTrsptFasta cDNA.of.new.assembled.trspt.fa \n";
+	exit;
+}
+
+my ($finalCdnaFasta, $pepOfEnsemblTrsptFasta, $cDNAOfNewAssembledTrsptFasta);
+
+GetOptions(
+        'finalCdnaFasta=s'=>\$finalCdnaFasta,
+        'pepOfEnsemblTrsptFasta=s'=>\$pepOfEnsemblTrsptFasta,
+        'cDNAOfNewAssembledTrsptFasta=s'=>\$cDNAOfNewAssembledTrsptFasta,
+);
+
+my (%allCdna, @tmp, $line, $id, @id);
+open FF, "<$finalCdnaFasta";
+while($line=<FF>){
+	chomp($line);
+	if($line=~/>(.*)/){
+		$id = $1;
+		@tmp = ();
+		@tmp = split(/ /, $id);
+		$id = $tmp[0];
+	}else{
+		$allCdna{$id}.=$line;
+	}
+}
+close FF;
+
+open FF, "<$pepOfEnsemblTrsptFasta";
+while($line=<FF>){
+	chomp($line);
+	if($line=~/>(.*)/){
+		$id = $1;
+		@tmp = ();
+		@tmp = split(/ /, $id);
+		$id = $tmp[0];
+		$allCdna{$id} = "";
+	}
+}
+close FF;
+
+my (@id);
+open WW, ">$cDNAOfNewAssembledTrsptFasta";
+@id = keys(%allCdna);
+foreach $id(@id){
+	if($allCdna{$id} ne ""){
+		print WW ">$id\n";
+		print WW $allCdna{$id} . "\n";
+	}
+}
+close WW;
+

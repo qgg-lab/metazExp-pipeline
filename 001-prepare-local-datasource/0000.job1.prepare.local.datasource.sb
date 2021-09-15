@@ -1,0 +1,533 @@
+#!/bin/bash
+source $commonEnvir
+source $speciesEnvir
+#source ../../00-config/commonEnvironmentVars.cfg
+#source ./00000.parameter.of.0000.job1.cfg
+
+export speciesTaxonId=`pwd | awk -F '/' '{print $(NF-1)}'`
+export currDir=`pwd`
+
+export cmbAnnoGtfFile=$currDir/$cmbAnnoGtfFile
+export cmbAnnoStaFile=$currDir/$cmbAnnoStaFile
+export cmbAnnoFullStaFile=$currDir/$cmbAnnoFullStaFile
+export sampleInforFile=$currDir/$sampleInforFile
+
+
+# inputs
+  # $speciesTaxonId
+  # commonEnvir:
+  #             $sradb
+  # speciesEnvir:
+  #             $ensemblGenomeAddress, $ensemblGtfAddress, $ensemblCdnaAddress
+  #             $refseqGenomeAddress,  $refseqGffAddress,  $refseqGenomeLocalFtpAddressDir 
+  #		$jgiGenomeAddress, $jgiGffAddress
+# outputs
+
+# check parameter setting
+if [ "$baseAnno"x != "ensembl"x -a "$baseAnno"x != "refseq"x -a "$baseAnno"x != "jgi"x ]
+then
+	echo "baseAnno must be ensembl, refseq or jgi."
+	exit
+fi
+
+if [ "$secondAnno"x != "None"x -a "$secondAnno"x != "ensembl"x -a "$secondAnno"x != "refseq"x -a "$secondAnno"x != "jgi"x ] 
+then
+	echo "secondAnno must be ensembl, refseq or jgi."
+	exit
+fi
+
+if [ "$downloadRefseqGenomeForm"x != "None"x -a "$downloadRefseqGenomeForm"x != "whole"x -a "$downloadRefseqGenomeForm"x != "seperate"x ]
+then
+	echo "downloadRefseqGenomeForm should be specified as None, whole or seperate."
+	exit
+fi
+
+if [ "$thirdAnno"x != "None"x -a "$thirdAnno"x != "ensembl"x -a "$thirdAnno"x != "refseq"x -a "$thirdAnno"x != "jgi"x ] 
+then
+	echo "thirdAnno must be ensembl, refseq or jgi."
+	exit
+fi
+
+# check the constrain between baseAnno and secondAnno, as well as between secondAnno and thirdAnno
+if [ "$baseAnno"x == "None"x ]
+then
+	echo "baseAnno must not be None."
+	exit
+fi
+
+if [ "$secondAnno"x != "None"x -a "$baseAnno"x == "None"x ]
+then
+	echo "baseAnno must not be None because secondAnno is not None."
+	exit
+fi
+
+if [ "$thirdAnno"x != "None"x -a "$secondAnno"x == "None"x ]
+then
+	echo "secondAnno must not be None becase thirdAnno is not None."
+	exit
+fi
+
+##############  -- 1 --  #############
+#
+# download data from ensembl
+#
+######################################
+
+####### genome ######
+
+if [ "$ensemblGenomeAddress"x != "None"x ]
+then
+	wget $ensemblGenomeAddress -O $currDir/ensembl.genome.fa.gz \
+		-o $currDir/log.o.wget.ensembl.genome.fa \
+		2> $currDir/log.e.wget.ensembl.genome.fa
+
+	gunzip $currDir/ensembl.genome.fa.gz \
+		1> $currDir/log.o.gunzip.ensembl.genome.fa \
+		2> $currDir/log.e.gunzip.ensembl.genome.fa
+fi
+
+####### gtf #########
+if [ "$ensemblGtfAddress"x != "None"x ]
+then
+	wget $ensemblGtfAddress -O $currDir/ensembl.gtf.gz \
+		-o $currDir/log.o.wget.ensembl.gtf \
+		2> $currDir/log.e.wget.ensembl.gtf
+
+	gunzip $currDir/ensembl.gtf.gz \
+		1> $currDir/log.o.gunzip.ensembl.gtf \
+		2> $currDir/log.e.gunzip.ensembl.gtf
+
+	# remove redundant trspts from annotated gtf
+	perl  $customizedSoftwareDir/remove.redundant.rna.from.gtf.by.coordinate.pl \
+		--inputGtfFile $currDir/ensembl.gtf \
+		--outputSrtGtfFile $currDir/nonRedundant.ensembl.gtf \
+		--outputTmpDir $currDir/srtTmp \
+		1> $currDir/log.o.remove.redundantTrspt.from.ensembl.gtf \
+		2> $currDir/log.e.remove.redundantTrspt.from.ensembl.gtf
+
+	#sort gtf
+	perl $customizedSoftwareDir/sort.gtf.by.coordinate.pl \
+		--inputGtfFile $currDir/nonRedundant.ensembl.gtf \
+		--outputSrtGtfFile $currDir/sorted.nonRedundant.ensembl.gtf \
+		--outputTmpDir $currDir/srtTmp \
+		1> $currDir/log.o.sort.nonRedundant.ensembl.gtf \
+		2> $currDir/log.e.sort.nonRedundant.ensembl.gtf
+fi
+
+###### cDNA #########
+if [ "$ensemblCdnaAddress"x != "None"x ]
+then
+	wget $ensemblCdnaAddress  -O $currDir/ensembl.cDNA.fa.gz \
+		-o $currDir/log.o.wget.ensembl.cDNA.fa \
+		2> $currDir/log.e.wget.ensembl.cDNA.fa
+
+	gunzip $currDir/ensembl.cDNA.fa.gz \
+		1> $currDir/log.o.gunzip.ensembl.cDNA.fa \
+		2> $currDir/log.e.gunzip.ensembl.cDNA.fa
+
+fi
+
+if [ "$ensemblPepAddress"x != "None"x ]
+then
+	wget $ensemblPepAddress  -O $currDir/ensembl.pep.fa.gz \
+		-o $currDir/log.o.wget.ensembl.pep.fa \
+		2> $currDir/log.e.wget.ensembl.pep.fa
+
+	gunzip $currDir/ensembl.pep.fa.gz \
+		1> $currDir/log.o.gunzip.ensembl.pep.fa \
+		2> $currDir/log.e.gunzip.ensembl.pep.fa
+
+	sed -i 's/^\(>.*\)\-P pep.*$/\1/' $currDir/ensembl.pep.fa
+fi
+
+
+
+##############  -- 2 --  ######################################
+#
+# download data from refseq
+#
+###############################################################
+
+######### genome ###########
+if [ "$refseqGenomeAddress"x != "None"x -a "$downloadRefseqGenomeForm"x == "seperate"x ]
+then
+	#download genome data from ncbi refseq
+	wget -c -r -np -k -L -p $refseqGenomeAddress/ \
+	-o $currDir/log.o.wget.refseq.genome.fa \
+	2> $currDir/log.e.wget.refseq.genome.fa
+	
+	export refseqGenomeLocalFtpAddressDir=${refseqGenomeAddress:6}
+
+	gunzip $currDir/$refseqGenomeLocalFtpAddressDir/*.fa.gz
+
+	cat $currDir/$refseqGenomeLocalFtpAddressDir/*.fa \
+		> $currDir/refseq.genome.fa
+
+	rm -rf $currDir/$refseqGenomeLocalFtpAddressDir
+fi
+
+if [ "$refseqGenomeAddress"x != "None"x -a "$downloadRefseqGenomeForm"x == "whole"x ]
+then
+	wget $refseqGenomeAddress -O $currDir/refseq.genome.fa.gz \
+		-o $currDir/log.o.wget.refseq.genome.fa \
+		2> $currDir/log.e.wget.refseq.genome.fa
+
+	gunzip $currDir/refseq.genome.fa.gz \
+		1> $currDir/log.o.gunzip.refseq.genome.fa \
+		1> $currDir/log.o.gunzip.refseq.genome.fa 
+fi
+
+######### gff3->gtf ###########
+if [ "$refseqGffAddress"x != "None"x ]
+then
+	wget $refseqGffAddress \
+		-O $currDir/refseq.gff3.gz \
+		2> $currDir/log.e.wget.refseq.gff3
+
+	gunzip $currDir/refseq.gff3.gz \
+		1> $currDir/log.o.gunzip.refseq.gff3 \
+		2> $currDir/log.e.gunzip.refseq.gff3
+
+	# convert refseq gff3 to gtf
+	perl $customizedSoftwareDir/convert.gff3.2.gtf.pl \
+		--inputGff3File $currDir/refseq.gff3 \
+		--detectSourceFlag no \
+		--sourceName refseq \
+		--outputGtfFile $currDir/refseq.gtf \
+		1> $currDir/log.o.convert.refseq.gff3.to.gtf \
+		2> $currDir/log.o.convert.refseq.gff3.to.gtf
+
+	# remove redundant rna
+	perl  $customizedSoftwareDir/remove.redundant.rna.from.gtf.by.coordinate.pl \
+		--inputGtfFile $currDir/refseq.gtf \
+		--outputSrtGtfFile $currDir/nonRedundant.refseq.gtf \
+		--outputTmpDir $currDir/srtTmp \
+		1> $currDir/log.o.remove.redundantTrspt.from.refseq.gtf \
+		2> $currDir/log.e.remove.redundantTrspt.from.refseq.gtf
+
+	#sort gtf
+	perl $customizedSoftwareDir/sort.gtf.by.coordinate.pl \
+		--inputGtfFile $currDir/nonRedundant.refseq.gtf \
+		--outputSrtGtfFile $currDir/sorted.nonRedundant.refseq.gtf \
+		--outputTmpDir $currDir/srtTmp \
+		1> $currDir/log.o.sort.nonRedundant.refseq.gtf \
+		2> $currDir/log.e.sort.nonRedundant.refseq.gtf
+
+fi
+
+##########  cDNA ###############
+if [ "$refseqCdnaAddress"x != "None"x ]
+then
+	wget $refseqCdnaAddress \
+		-O $currDir/refseq.cDNA.fa.gz \
+		2> $currDir/log.e.wget.refseq.cDNA.fa
+
+	gunzip $currDir/refseq.cDNA.fa.gz \
+		1> $currDir/log.o.gunzip.refseq.cDNA.fa
+		2> $currDir/log.e.gunzip.refseq.cDNA.fa			
+fi
+
+if [ "$refseqPepAddress"x != "None"x ]
+then
+	wget $refseqPepAddress  -O $currDir/refseq.pep.fa.gz \
+		-o $currDir/log.o.wget.refseq.pep.fa \
+		2> $currDir/log.e.wget.refseq.pep.fa
+
+	gunzip $currDir/refseq.pep.fa.gz \
+		1> $currDir/log.o.gunzip.refseq.pep.fa \
+		2> $currDir/log.e.gunzip.refseq.pep.fa
+
+fi
+
+
+##############  -- 3 --  ######################################
+#
+# download data from jgi
+#
+###############################################################
+####### genome ######
+if [ "$jgiGenomeAddress"x != "None"x ]
+then
+	cat $jgiGenomeAddress | gunzip > $currDir/jgi.genome.fa \
+		2> $currDir/log.e.gunzip.jgi.genome.fa
+fi
+
+####### gtf #########
+if [ "$jgiGffAddress"x != "None"x ]
+then
+	cat $jgiGffAddress | gunzip > $currDir/jgi.gff3 \
+		2> $currDir/log.e.jgi.gunzip.gff3
+	
+        #convert jgi gff3 to gtf
+        perl $customizedSoftwareDir/convert.gff3.2.gtf.pl \
+		--inputGff3File $currDir/jgi.gff3 \
+		--detectSourceFlag no \
+		--sourceName jgi \
+		--outputGtfFile $currDir/jgi.gtf \
+		1> $currDir/log.o.convert.jgi.gff3.to.gtf \
+		2> $currDir/log.o.convert.jgi.gff3.to.gtf
+
+	# remove redundant rna
+	perl  $customizedSoftwareDir/remove.redundant.rna.from.gtf.by.coordinate.pl \
+		--inputGtfFile $currDir/jgi.gtf \
+		--outputSrtGtfFile $currDir/nonRedundant.jgi.gtf \
+		--outputTmpDir $currDir/srtTmp \
+		1> $currDir/log.o.remove.redundantTrspt.from.jgi.gtf \
+		2> $currDir/log.e.remove.redundantTrspt.from.jgi.gtf
+
+	#sort gtf
+	perl $customizedSoftwareDir/sort.gtf.by.coordinate.pl \
+		--inputGtfFile $currDir/nonRedundant.jgi.gtf \
+		--outputSrtGtfFile $currDir/sorted.nonRedundant.jgi.gtf \
+		--outputTmpDir $currDir/srtTmp \
+		1> $currDir/log.o.sort.nonRedundant.jgi.gtf \
+		2> $currDir/log.e.sort.nonRedundant.jgi.gtf
+fi
+
+###### cDNA #########
+if [ "$jgiCdnaAddress"x != "None"x ]
+then
+	cat $jgiCdnaAddress | gunzip > $currDir/jgi.cDNA.fa \
+		2> $currDir/log.e.gunzip.jgi.cDNA.fa
+fi
+
+
+###############  -- 4 --    ########################
+#
+#	combine second, thirdAnno based on baseAnno
+#
+####################################################
+
+# If secondAnno doesn't exist, the baseAnno will be used as final
+# combinedAnno
+if [ "$secondAnno"x == "None"x ]
+then
+
+	ln -sf $currDir/$baseAnno.genome.fa $currDir/genome.fa
+	ln -sf $currDir/sorted.nonRedundant.$baseAnno.gtf $cmbAnnoGtfFile
+	ln -sf $currDir/$baseAnno.cDNA.fa $currDir/cDNA.fa
+	export geneNum=`grep -cP "\tgene\t" $cmbAnnoGtfFile`
+	export trsptNum=`grep -cP "\ttranscript\t" $cmbAnnoGtfFile`
+	export exonNum=`grep -P "\texon\t" $cmbAnnoGtfFile |awk -F '\t' '{print $1"\t"$4"\t"$5"\t"$7}' |sort -u |wc -l`
+	echo -e "$currDir/$baseAnno.gtf\t$geneNum\t$trsptNum\t$exonNum" > $cmbAnnoFullStaFile
+
+else
+# If secondAnno exists, baseAnno and secondAnno are combined based on baseAnno
+	# build mapping relationship between second genome seqid and base genome seqid
+	perl $customizedSoftwareDir/build.seqId.mapping.between.two.genome.pl \
+		--firstGenomeFile $currDir/$baseAnno.genome.fa \
+		--secondGenomeFile $currDir/$secondAnno.genome.fa \
+		--maxDiffBaseNum 500 \
+		--maxDiffBaseRatio 0.005 \
+		--seqLenChangeRegion 50 \
+		--outputMismatchFile $currDir/mismatchBase.$secondAnno.seqId.map.$baseAnno.seqId.tsv \
+		--outputSeqIdMappingFile $currDir/$secondAnno.seqId.map.$baseAnno.seqId.tsv \
+		1> $currDir/log.o.build.$secondAnno.seqId.map.$baseAnno.seqId.tsv \
+		2> $currDir/log.e.build.$secondAnno.seqId.map.$baseAnno.seqId.tsv
+
+	export notMatchSeqNum=`grep -cP "\t\-" $currDir/$secondAnno.seqId.map.$baseAnno.seqId.tsv`
+	if [ $notMatchSeqNum -gt 2 ] 
+	then
+		echo "$notMatchSeqNum seqs in $secondAnno genome don't match $baseAnno genome."
+		echo "You should better to check it."
+		exit
+	fi
+
+	# replace seqId in secondAnn with baseAnno seqId
+	perl  $customizedSoftwareDir/convert.RefSeqId.2.EnsemblId.in.RefAnno.pl \
+		--refAnnoFile $currDir/sorted.nonRedundant.$secondAnno.gtf \
+		--seqIdMapFile $currDir/$secondAnno.seqId.map.$baseAnno.seqId.tsv \
+		--outputNewAnnoFile $currDir/sorted.nonRedundant.$secondAnno.gtf.with.$baseAnno.SeqId \
+		1> $currDir/log.o.convert.$secondAnno.seqId.to.$baseAnno.seqId \
+		2> $currDir/log.e.convert.$secondAnno.seqId.to.$baseAnno.seqId
+
+	#combine nonredundant annoations of secondAnno and baseAnno
+	perl $customizedSoftwareDir/combined.reference.and.assembly.based.on.cuffcompare.pl \
+                 --referenceGtf $currDir/sorted.nonRedundant.$baseAnno.gtf \
+                 --assemblyGtf $currDir/sorted.nonRedundant.$secondAnno.gtf.with.$baseAnno.SeqId \
+                 --cuffcompare  $softwareDir/cufflinks-2.2.1.Linux_x86_64/cuffcompare \
+                 --transcriptMinCov      -1 \
+                 --transcriptMinLen      -1 \
+		 --exonMinCov		 -1\
+                 --minExonNum  -1 \
+                 --outputTmpDir  $currDir/tmpCombineDir \
+                 --outputCombinedGtf $currDir/nonSorted.combined.nonRedundant.$secondAnno.and.$baseAnno.gtf \
+                 --outputCombineStat $currDir/nonSorted.combined.nonRedundant.$secondAnno.and.$baseAnno.sta \
+		 1> $currDir/log.o.combine.$secondAnno.and.$baseAnno \
+		 2> $currDir/log.e.combine.$secondAnno.and.$baseAnno
+
+	#sort gtf
+	perl $customizedSoftwareDir/sort.gtf.by.coordinate.pl \
+		--inputGtfFile $currDir/nonSorted.combined.nonRedundant.$secondAnno.and.$baseAnno.gtf \
+		--outputSrtGtfFile $currDir/sorted.combined.nonRedundant.$secondAnno.and.$baseAnno.gtf \
+		--outputTmpDir $currDir/srtTmp \
+		1> $currDir/log.o.sort.nonSorted.combined.nonRedundant.$secondAnno.and.$baseAnno.gtf \
+		2> $currDir/log.e.sort.nonSorted.combined.nonRedundant.$secondAnno.and.$baseAnno.gtf
+
+
+	# with thirdAnno
+	if [ "$thirdAnno"x == "None"x ] 
+	then
+		ln -sf $currDir/$baseAnno.genome.fa $currDir/genome.fa
+		ln -sf $currDir/sorted.combined.nonRedundant.$secondAnno.and.$baseAnno.gtf $cmbAnnoGtfFile
+		ln -sf $currDir/nonSorted.combined.nonRedundant.$secondAnno.and.$baseAnno.sta $cmbAnnoStaFile
+		ln -sf $currDir/$baseAnno.cDNA.fa $currDir/cDNA.fa
+
+		#statistic of combined annotation
+		perl $customizedSoftwareDir/statistic.merge.annotation.pl \
+                	--mergedAnnoGtf	$cmbAnnoGtfFile \
+	                --mergeLabel	Combine \
+	                --anno1Gtf	$currDir/sorted.nonRedundant.$baseAnno.gtf \
+	                --anno1Label	$baseAnno \
+	                --anno2Gtf	$currDir/sorted.nonRedundant.$secondAnno.gtf.with.$baseAnno.SeqId \
+	                --anno2Label	$secondAnno \
+	                --xvfb-run  $xvfb_run  \
+	                --Rscript   $Rscript \
+	                --drawVennRscript $customizedSoftwareDir/draw.vennDiagram.for.three.sets.R \
+	                --drawBarRscript $customizedSoftwareDir/draw.barDiagram.for.three.sets.R \
+	                --drawDensityRscript $customizedSoftwareDir/draw.densityDiagram.for.three.sets.R  \
+	                --densityExonMinLen 1 \
+	                --densityExonMaxLen 500 \
+	                --densityTranscriptMinLen 100 \
+	                --densityTranscriptMaxLen 5000 \
+	                --outputStaTbl $currDir/combined.$baseAnno.and.$secondAnno.full.sta \
+	                --outputTrsptEnsRefMergVenn $currDir/venn.of.trspt.png \
+	                --outputExonEnsRefMergVenn $currDir/venn.of.exon.png \
+	                --outputDonorEnsRefMergVenn $currDir/venn.of.donor.png \
+	                --outputAcceptorEnsRefMergVenn $currDir/venn.of.acceptor.png \
+	                --outputTrsptLenEnsRefMergDensity $currDir/density.of.trsptLen.png \
+	                --outputExonLenEnsRefMergDensity $currDir/density.of.exonLen.png \
+	                --outputTrsptNumEnsRefMergBar $currDir/bar.of.gene.with.trsptNum.png \
+	                --outputExonNumEnsRefMergBar $currDir/bar.of.trspt.with.exonNum.png \
+	                --outputImagType png \
+	                --tmpOutputDir $currDir/tmpStatisticDir \
+	                1> $currDir/log.o.statistic.combine.$baseAnno.and.$secondAnno \
+	                2> $currDir/log.e.statistic.combine.$baseAnno.and.$secondAnno
+
+			ln -sf $currDir/combined.$baseAnno.and.$secondAnno.full.sta $cmbAnnoFullStaFile
+	else
+	
+		# build mapping relationship between second genome seqid and base genome seqid
+		perl $customizedSoftwareDir/build.seqId.mapping.between.two.genome.pl \
+			--firstGenomeFile $currDir/$baseAnno.genome.fa \
+			--secondGenomeFile $currDir/$thirdAnno.genome.fa \
+                	--maxDiffBaseNum 500 \
+        	        --maxDiffBaseRatio 0.005 \
+	                --seqLenChangeRegion 50 \
+			--outputMismatchFile $currDir/mismatchBase.$thirdAnno.seqId.map.$baseAnno.seqId.tsv \
+			--outputSeqIdMappingFile $currDir/$thirdAnno.seqId.map.$baseAnno.seqId.tsv \
+			1> $currDir/log.o.build.$thirdAnno.seqId.map.$baseAnno.seqId.tsv \
+			2> $currDir/log.e.build.$thirdAnno.seqId.map.$baseAnno.seqId.tsv
+
+		export notMatchSeqNum=`grep -cP "\t\-" $currDir/$thirdAnno.seqId.map.$baseAnno.seqId.tsv`
+		if [ $notMatchSeqNum -gt 2 ] 
+		then
+			echo "$notMatchSeqNum seqs in $thirdAnno genome don't match $baseAnno genome."
+			echo "You should better to check it."
+			exit
+		fi
+
+		# replace seqId in thirdAnn with baseAnno seqId
+		perl  $customizedSoftwareDir/convert.RefSeqId.2.EnsemblId.in.RefAnno.pl \
+			--refAnnoFile $currDir/sorted.nonRedundant.$thirdAnno.gtf \
+			--seqIdMapFile $currDir/$thirdAnno.seqId.map.$baseAnno.seqId.tsv \
+			--outputNewAnnoFile $currDir/sorted.nonRedundant.$thirdAnno.gtf.with.$baseAnno.SeqId \
+			1> $currDir/log.o.convert.$thirdAnno.seqId.to.$baseAnno.seqId \
+			2> $currDir/log.e.convert.$thirdAnno.seqId.to.$baseAnno.seqId
+
+		#combine nonredundant annoations of thirdAnno, secondAnno and baseAnno
+		perl $customizedSoftwareDir/combined.reference.and.assembly.based.on.cuffcompare.pl \
+	                 --referenceGtf $currDir/sorted.combined.nonRedundant.$secondAnno.and.$baseAnno.gtf \
+        	         --assemblyGtf $currDir/sorted.nonRedundant.$thirdAnno.gtf.with.$baseAnno.SeqId \
+                	 --cuffcompare  $softwareDir/cufflinks-2.2.1.Linux_x86_64/cuffcompare \
+	                 --transcriptMinCov      -1 \
+	                 --transcriptMinLen      -1 \
+			 --exonMinCov		 -1\
+	                 --minExonNum  -1 \
+	                 --outputTmpDir  $currDir/tmpCombineDir \
+        	         --outputCombinedGtf $currDir/nonSorted.combined.nonRedundant.$thirdAnno.and.$secondAnno.and.$baseAnno.gtf \
+	                 --outputCombineStat $currDir/nonSorted.combined.nonRedundant.$thirdAnno.and.$secondAnno.and.$baseAnno.sta \
+			 1> $currDir/log.o.combine.$thirdAnno.and.$secondAnno.and.$baseAnno \
+			 2> $currDir/log.e.combine.$thirdAnno.and.$secondAnno.and.$baseAnno
+
+		#sort gtf
+		perl $customizedSoftwareDir/sort.gtf.by.coordinate.pl \
+			--inputGtfFile $currDir/nonSorted.combined.nonRedundant.$thirdAnno.and.$secondAnno.and.$baseAnno.gtf \
+			--outputSrtGtfFile $currDir/sorted.combined.nonRedundant.$thirdAnno.and.$secondAnno.and.$baseAnno.gtf \
+			--outputTmpDir $currDir/srtTmp \
+			1> $currDir/log.o.sort.nonSorted.combined.nonRedundant.$thirdAnno.and.$secondAnno.and.$baseAnno.gtf \
+			2> $currDir/log.e.sort.nonSorted.combined.nonRedundant.$thirdAnno.and.$secondAnno.and.$baseAnno.gtf
+
+		
+		ln -sf $currDir/$baseAnno.genome.fa $currDir/genome.fa
+		ln -sf $currDir/sorted.combined.nonRedundant.$thirdAnno.and.$secondAnno.and.$baseAnno.gtf $cmbAnnoGtfFile
+		ln -sf $currDir/$baseAnno.cDNA.fa $currDir/cDNA.fa
+		ln -sf $currDir/nonSorted.combined.nonRedundant.$thirdAnno.and.$secondAnno.and.$baseAnno.sta $cmbAnnoStaFile
+
+		#statistic of combined annotation
+		perl $customizedSoftwareDir/statistic.merge.three.annotation.pl \
+                	--mergedAnnoGtf	$cmbAnnoGtfFile \
+	                --mergeLabel	Combine \
+	                --anno1Gtf	$currDir/sorted.nonRedundant.$baseAnno.gtf \
+	                --anno1Label	$baseAnno \
+	                --anno2Gtf	$currDir/sorted.nonRedundant.$secondAnno.gtf.with.$baseAnno.SeqId \
+	                --anno2Label	$secondAnno \
+			--anno3Gtf	$currDir/sorted.nonRedundant.$thirdAnno.gtf.with.$baseAnno.SeqId \
+			--anno3Label    $thirdAnno \
+	                --xvfb-run  $xvfb_run \
+	                --Rscript   $Rscript \
+	                --drawVennRscript $customizedSoftwareDir/draw.vennDiagram.for.four.sets.R \
+	                --drawBarRscript $customizedSoftwareDir/draw.barDiagram.for.four.sets.R \
+	                --drawDensityRscript $customizedSoftwareDir/draw.densityDiagram.for.four.sets.R  \
+	                --densityExonMinLen 1 \
+	                --densityExonMaxLen 500 \
+	                --densityTranscriptMinLen 100 \
+	                --densityTranscriptMaxLen 5000 \
+	                --outputStaTbl $currDir/combined.$baseAnno.and.$secondAnno.and.$thirdAnno.full.sta \
+	                --outputTrsptEnsRefMergVenn $currDir/venn.of.trspt.png \
+	                --outputExonEnsRefMergVenn $currDir/venn.of.exon.png \
+	                --outputDonorEnsRefMergVenn $currDir/venn.of.donor.png \
+	                --outputAcceptorEnsRefMergVenn $currDir/venn.of.acceptor.png \
+	                --outputTrsptLenEnsRefMergDensity $currDir/density.of.trsptLen.png \
+	                --outputExonLenEnsRefMergDensity $currDir/density.of.exonLen.png \
+	                --outputTrsptNumEnsRefMergBar $currDir/bar.of.gene.with.trsptNum.png \
+	                --outputExonNumEnsRefMergBar $currDir/bar.of.trspt.with.exonNum.png \
+	                --outputImagType png \
+	                --tmpOutputDir $currDir/tmpStatisticDir \
+	                1> $currDir/log.o.statistic.combine.$baseAnno.and.$secondAnno.and.$thirdAnno \
+	                2> $currDir/log.e.statistic.combine.$baseAnno.and.$secondAnno.and.$thirdAnno
+
+			ln -sf $currDir/combined.$baseAnno.and.$secondAnno.and.$thirdAnno.full.sta $cmbAnnoFullStaFile
+	fi
+fi
+
+
+####### -- build genome database based on combined annotation -- #####
+#build genome database
+$python2 $hisat2Dir/hisat2_extract_splice_sites.py \
+	$cmbAnnoGtfFile \
+	> $currDir/splicesites.txt \
+	2> $currDir/log.e.extract.spliceSite.from.combined.gtf
+
+$python2 $hisat2Dir/hisat2_extract_exons.py \
+	$cmbAnnoGtfFile \
+	> $currDir/exons.txt \
+	2> $currDir/log.e.extract.exon.from.combined.gtf
+
+#build genome database
+$hisat2Dir/hisat2-build \
+	--ss $currDir/splicesites.txt \
+	--exon $currDir/exons.txt  \
+	-p $threadNum \
+	$currDir/genome.fa \
+	$currDir/genome \
+	1> $currDir/log.o.hisat2.build.genome \
+	2> $currDir/log.e.hisat2.build.genome
+
+#build cDNA database
+$hisat2Dir/hisat2-build \
+	-p $threadNum \
+	$currDir/cDNA.fa \
+	$currDir/cDNA \
+	1> $currDir/log.o.hisat2.build.cDNA \
+	2> $currDir/log.e.hisat2.build.cDNA

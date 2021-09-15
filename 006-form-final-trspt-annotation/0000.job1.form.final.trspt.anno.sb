@@ -1,0 +1,197 @@
+#!/bin/bash
+source $commonEnvir
+source $paras
+
+source ../../00-config/commonEnvironmentVars.cfg
+source ./00000.parameter.of.0000.job1.cfg 
+
+export taxonId=`pwd |awk -F '/' '{print $(NF-1)}'`
+export currDir=`pwd`
+
+# ################ inputs #########################################################
+export filterFile=$currDir/$filterFile
+
+# combined annotations of ensembl and refseq
+export cmbAnnoGtfFile=$currDir/../$prepareLocalDataSrcDir/$cmbAnnoGtfFile
+# combined trspt annotation from ensembl, refseq and RNA-seq assemblies
+export combinedGtf=$currDir/../004-combine-assemblies-and-annos/$finalCmbTrsptAnnGtfFile
+# origin tags of all combined trspts
+export trsptTagFile=$currDir/../005-tag-exp-Stdy-to-comTrspts/trspt.with.orign.tissue.exptList.tsv
+# ensembl annotation
+export ensemblAnnoGtf=$currDir/../$prepareLocalDataSrcDir/sorted.nonRedundant.ensembl.gtf
+# refseq annotation
+export refseqAnnoGtf=$currDir/../$prepareLocalDataSrcDir/sorted.nonRedundant.refseq.gtf.with.ensembl.SeqId
+
+################## output #########################################################
+# final trspt gtf annotation file
+export cmplTrsptAnnoGtf=$currDir/$cmplTrsptAnnoGtf
+export cmplTrsptAnnoFullStaFile=$currDir/$cmplTrsptAnnoFullStaFile
+export novelTrsptAnnoFile=$currDir/$novelTrsptAnnoFile
+export cmplTrsptOrigTagFile=$currDir/$cmplTrsptOrigTagFile
+
+
+perl $customizedSoftwareDir/extract.new.assembled.trspt.not.meet.filter.criterion.pl \
+	--trsptTagFile $trsptTagFile \
+	--filterFile $filterFile \
+	--outputRmTrsptIdListFile $currDir/removed.trsptId.list.1 \
+	1> $currDir/log.o.extract.new.assembled.trspt.not.meet.filter.criterion \
+	2> $currDir/log.e.extract.new.assembled.trspt.not.meet.filter.criterion
+	
+
+perl $customizedSoftwareDir/remove.trspt.from.gtf.pl \
+	--inputGtf 			$combinedGtf \
+	--removedTrsptIdList		$currDir/removed.trsptId.list.1 \
+	--outputRemainedGtf		$currDir/noSorted.remained.gtf.1 \
+	1> $currDir/log.o.remove.trspt.from.gtf.1 \
+	2> $currDir/log.e.remove.trspt.from.gtf.1
+
+perl $customizedSoftwareDir/sort.gtf.by.coordinate.pl \
+	--inputGtfFile $currDir/noSorted.remained.gtf.1 \
+	--outputSrtGtfFile $currDir/sorted.remained.gtf.1 \
+	--outputTmpDir $currDir/srtTmp \
+	1> $currDir/log.o.sort.nonSorted.remained.gtf.1 \
+	2> $currDir/log.e.sort.nonSorted.remained.gtf.1
+
+
+export preIterationNum=1
+
+while [ $preIterationNum -lt 100000 ]; do
+
+	export currIterationNum=$[$preIterationNum+1];
+
+	grep -P "\tStringTie\t" $currDir/sorted.remained.gtf.$preIterationNum > $currDir/tmp.novel.trspt.anno.gtf.$currIterationNum
+
+	$cuffcompare -r $cmbAnnoGtfFile -C -o cmp $currDir/tmp.novel.trspt.anno.gtf.$currIterationNum
+
+	awk -F '\t' '{if($3!="j"){print $5}}' $currDir/cmp.tmp.novel.trspt.anno.gtf.$currIterationNum.tmap \
+	> $currDir/removed.trsptId.list.$currIterationNum
+	
+	sed -i '/cuff_id/d' $currDir/removed.trsptId.list.$currIterationNum
+	sed -i '/^$/d' $currDir/removed.trsptId.list.$currIterationNum
+
+	perl $customizedSoftwareDir/remove.trspt.from.gtf.pl \
+		--inputGtf 			$currDir/sorted.remained.gtf.$preIterationNum \
+		--removedTrsptIdList		$currDir/removed.trsptId.list.$currIterationNum \
+		--outputRemainedGtf		$currDir/noSorted.remained.gtf.$currIterationNum \
+		1> $currDir/log.o.remove.trspt.from.gtf.$currIterationNum \
+		2> $currDir/log.e.remove.trspt.from.gtf.$currIterationNum
+
+
+	perl $customizedSoftwareDir/sort.gtf.by.coordinate.pl \
+		--inputGtfFile $currDir/noSorted.remained.gtf.$currIterationNum \
+		--outputSrtGtfFile $currDir/sorted.remained.gtf.$currIterationNum \
+		--outputTmpDir $currDir/srtTmp \
+		1> $currDir/log.o.sort.nonSorted.remained.gtf.$currIterationNum \
+		2> $currDir/log.e.sort.nonSorted.remained.gtf.$currIterationNum
+
+	if [ -s $currDir/removed.trsptId.list.$currIterationNum -a $preIterationNum -ne $maxIterNum ]
+	then
+		export preIterationNum=$[$preIterationNum+1];
+	else
+		sed -i '/^$/d' $currDir/sorted.remained.gtf.$currIterationNum
+		ln -sf $currDir/sorted.remained.gtf.$currIterationNum $currDir/sorted.remained.gtf.with.notUniqTrsptCluster;
+		break;
+	fi
+
+done
+
+
+awk -F '\t' '{print $1}' $currDir/../004-combine-assemblies-and-annos/cutoff.info.of.assembled.experiment.tsv > $currDir/combined.transcriptome.list
+
+
+touch $currDir/refseq.gff3
+touch $currDir/refseq.seqId.map.ensembl.seqId.tsv
+
+
+perl ~/software.jinding/customized/identify.unclustered.genes.pl \
+	--gtfFile $currDir/sorted.remained.gtf.with.notUniqTrsptCluster \
+	--refGtfFileList $currDir/../$prepareLocalDataSrcDir/ensembl.gtf \
+	--refGffFileList $currDir/refseq.gff3 \
+	--RnaseqAssemblyListFile $currDir/combined.transcriptome.list \
+	--gffChrToGtfChrFile $currDir/refseq.seqId.map.ensembl.seqId.tsv \
+	--unClusteredGeneList $currDir/1.unClusterGeneList.tsv \
+	1> $currDir/log.o.identify.1.unclutered.genes \
+	2> $currDir/log.e.identify.1.unclutered.genes
+
+
+perl ~/software.jinding/customized/rename.trsptClusters.up.or.downstream.gene.pl \
+        --unClusteredGeneList $currDir/1.unClusterGeneList.tsv \
+        --originalGtfFile     $currDir/sorted.remained.gtf.with.notUniqTrsptCluster \
+        --outputRenameTrspt   $currDir/1.renamed.trsptId.list \
+        --outputNewGtfFile            $currDir/1.new.sorted.remained.gtf.with.notUniqTrsptCluster \
+       1> $currDir/log.o.rename.1.trspt \
+       2> $currDir/log.e.rename.1.trspt
+
+
+perl ~/software.jinding/customized/identify.unclustered.genes.pl \
+        --gtfFile $currDir/1.new.sorted.remained.gtf.with.notUniqTrsptCluster \
+        --refGtfFileList $currDir/../$prepareLocalDataSrcDir/ensembl.gtf \
+        --refGffFileList $currDir//refseq.gff3 \
+        --RnaseqAssemblyListFile $currDir/combined.transcriptome.list \
+        --gffChrToGtfChrFile $currDir/refseq.seqId.map.ensembl.seqId.tsv \
+        --unClusteredGeneList $currDir/2.unClusterGeneList.tsv \
+        1> $currDir/log.o.identify.2.unclutered.genes \
+        2> $currDir/log.e.identify.2.unclutered.genes
+
+
+perl ~/software.jinding/customized/rename.trsptClusters.into.gene.pl \
+        --unClusteredGeneList $currDir/2.unClusterGeneList.tsv \
+        --originalGtfFile     $currDir/1.new.sorted.remained.gtf.with.notUniqTrsptCluster \
+        --outputRenameTrspt   $currDir/2.renamed.trsptId.list \
+        --outputNewGtfFile            $currDir/2.new.sorted.remained.gtf.with.notUniqTrsptCluster \
+       1> $currDir/log.o.rename.2.trspt \
+       2> $currDir/log.e.rename.2.trspt
+
+
+perl ~/software.jinding/customized/identify.unclustered.genes.pl \
+        --gtfFile $currDir/2.new.sorted.remained.gtf.with.notUniqTrsptCluster \
+        --refGtfFileList $currDir/../$prepareLocalDataSrcDir/ensembl.gtf \
+        --refGffFileList $currDir/refseq.gff3 \
+        --RnaseqAssemblyListFile $currDir/combined.transcriptome.list \
+        --gffChrToGtfChrFile $currDir/refseq.seqId.map.ensembl.seqId.tsv \
+        --unClusteredGeneList $currDir/3.unClusterGeneList.tsv \
+        1> $currDir/log.o.identify.3.unclutered.genes \
+        2> $currDir/log.e.identify.3.unclutered.genes
+
+ln -sf $currDir/2.new.sorted.remained.gtf.with.notUniqTrsptCluster $cmplTrsptAnnoGtf
+
+
+# generate transcript DNA, RNA and protein sequence
+perl $customizedSoftwareDir/generate.final.complete.trspt.seq.file.pl.3702 \
+		--inputGenomeFile $currDir/../$prepareLocalDataSrcDir/genome.fa \
+		--inputFinalAnnotGtfFile ./final.complete.trspt.anno.gtf \
+		--inputOriginGtfFileList $currDir/../$prepareLocalDataSrcDir/ensembl.gtf \
+		--inputOriginGffFileList $currDir/../$prepareLocalDataSrcDir/refseq.gff3 \
+		--inputProteinFileList $currDir/../$prepareLocalDataSrcDir/ensembl.pep.fa,$currDir/../$prepareLocalDataSrcDir/refseq.pep.fa \
+		--outputDNAseqFile $currDir/$cmplTrsptDNASeq \
+		--outputProteinSeqFile $currDir/$cmplTrsptPepSeq \
+		--outputCdnaSeqFile $currDir/$cmplTrsptCdnaSeq \
+		1> $currDir/log.o.generate.final.complete.trspt.pep.file \
+		2> $currDir/log.e.generate.final.complete.trspt.pep.file
+
+perl $customizedSoftwareDir/convert.asterisk.to.X.pl \
+                $currDir/$cmplTrsptPepSeq
+
+
+
+touch $currDir/blankPep.fa
+# annotate cDNA by interproscan
+perl $customizedSoftwareDir/interproscan.annotate.final.trspt.pl \
+		--interproscan $interproscan \
+		--outputDir $currDir/interproscanDir \
+		--inputCdnaSeqFile $currDir/$cmplTrsptCdnaSeq \
+		--inputPepSeqFile $currDir/blankPep.fa \
+		--taxonId $taxonId \
+		1> $currDir/log.o.interproscan.annotation \
+		2> $currDir/log.e.interproscan.annotation
+
+:<<block
+cat $currDir/interproscanDir/cDNA_*.tsv > $currDir/$cmplTrsptInterproscanAnnoNotInPepFile
+cat $currDir/interproscanDir/pep_*.tsv > $currDir/$cmplTrsptInterproscanAnnoInPepFile
+
+perl $customizedSoftwareDir/gather.interproscan.terms.pl \
+		--inputInterproAnnoNotInPepFile $currDir/$cmplTrsptInterproscanAnnoNotInPepFile \
+		--inputInterproAnnoInPepFile $currDir/$cmplTrsptInterproscanAnnoInPepFile \
+		--outputPurePfamAndGoTermFile $currDir/$cmplTrsptPfamGOAnno
+
+block

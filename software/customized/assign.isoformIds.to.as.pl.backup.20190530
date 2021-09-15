@@ -1,0 +1,86 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+		"--dbName asdb \\\n" . 
+		"--dbUser lsas \\\n" . 
+		"--dbPWD njaulsas2019 \\\n" . 
+		"--species \"Bos taurus\" \n";
+	exit;
+}
+
+my ($dbName, $dbUser, $dbPWD);
+my ($species);
+
+GetOptions(
+        'dbName=s'=>\$dbName,
+        'dbUser=s'=>\$dbUser,
+        'dbPWD=s'=>\$dbPWD,
+        'species=s'=>\$species,
+);
+
+my (%as, %geneToIsoform);
+my ($row);
+my ($asId, $geneId, $isoformId, $firstAltExonSeries, $secondAltExonSeries, $exonSeries);
+my $dbh = DBI->connect("DBI:mysql:database=liujind1_db1;host=db-01;mysql_skip_secure_auth=1", "liujind1", "DHQn4TdaUE=9h#9");
+my $query = $dbh->prepare("select asId, geneId, firstAltExonSeries, secondAltExonSeries from asTable where species=\"" . $species . "\"");
+$query->execute();
+while($row=$query->fetchrow_hashref()){
+	${$as{$row->{"asId"}}}{"geneId"} = $row->{"geneId"};
+	${$as{$row->{"asId"}}}{"firstAltExonSeries"} = $row->{"firstAltExonSeries"};
+	${$as{$row->{"asId"}}}{"secondAltExonSeries"} = $row->{"secondAltExonSeries"};
+}
+$query->finish();
+print "Finish load as\n";
+
+
+print "Begin search isoform\n";
+my $num=0;
+$query = $dbh->prepare("select isoformId, geneId, exonSeries from isoformTable where species=\"" . $species . "\"");
+$query->execute();
+while($row=$query->fetchrow_hashref()){
+	$geneToIsoform{$row->{"geneId"}} .= $row->{"isoformId"} . ":" . $row->{"exonSeries"} . "#";
+}
+$query->finish();
+print "Finish load isoform\n";
+
+
+# assign isoformIds to asId
+my @asId = keys(%as);
+my @tt;
+my $sql;
+foreach $asId(@asId){
+
+	${$as{$asId}}{"isoformIdList"} = &getIsoformIdList($geneToIsoform{$row->{${$as{$asId}}{"geneId"}}}, ${$as{$asId}}{"firstAltExonSeries"}, ${$as{$asId}}{"secondAltExonSeries"});
+	@tt = ();
+	@tt = split(/,/, ${$as{$asId}}{"isoformIdList"});
+	${$as{$asId}}{"isoformNum"} = $#tt+1;
+
+	$sql = "update asTable set isoformIdList=\"" . ${$as{$asId}}{"isoformIdList"} . "\", isoformNum=" . ${$as{$asId}}{"isoformNum"} . " where asId=\"" . $asId . "\"";
+#	print $sql;
+#	<STDIN>;
+	$query=$dbh->prepare($sql);
+	$query->execute();
+}
+
+
+
+sub getIsoformIdList{
+	my ($multiIsoformIdAndExonSeries, $firstAltExonSeries, $secondAltExonSeries) = @_;
+	my ($returnIsoformIdList);
+	my (@isoformIdExonSeries, $isoformId, $exonSeries);
+	@isoformIdExonSeries = split(/#/, $multiIsoformIdAndExonSeries);
+	foreach my $isoformIdExonSeries(@isoformIdExonSeries){
+		$isoformId = "";
+		$exonSeries = "";
+		($isoformId, $exonSeries) = split(/:/, $isoformIdExonSeries);
+
+		if(index($exonSeries, $firstAltExonSeries)>=0 or index($exonSeries, $secondAltExonSeries)>=0){
+			$returnIsoformIdList .= $isoformId . ",";
+		}
+	}
+	$returnIsoformIdList = substr($returnIsoformIdList, 0, length($returnIsoformIdList)-1);
+}
+

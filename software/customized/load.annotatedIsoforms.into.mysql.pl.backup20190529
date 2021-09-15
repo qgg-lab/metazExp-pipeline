@@ -1,0 +1,247 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+		"--dbName asdb \\\n" . 
+		"--dbUser lsas \\\n" . 
+		"--dbPWD njaulsas2019 \\\n" . 
+		"--species \"Bos taurus\" \\\n" .
+		"--inputAnnoGtfFile ./final.complete.trspt.anno.gtf \\\n" .
+		"--inputCdnaSeqFile ./final.complete.trspt.cDNA.fa \\\n".
+		"--inputDNAseqFile ./final.complete.trspt.DNA.fa \\\n" .
+		"--inputPepSeqFile ./final.complete.trspt.pep.fa \n";
+
+	print "Note: the annotated gtf file must be sorted by exon coordinate\n\n";
+	exit;
+}
+
+my ($dbName, $dbUser, $dbPWD);
+my ($species, $inputAnnoGtfFile);
+my ($inputAnnoGtfFile, $inputDNAseqFile, $inputPepSeqFile, $inputCdnaSeqFile);
+
+GetOptions(
+        'dbName=s'=>\$dbName,
+        'dbUser=s'=>\$dbUser,
+        'dbPWD=s'=>\$dbPWD,
+        'species=s'=>\$species,
+        'inputAnnoGtfFile=s'=>\$inputAnnoGtfFile,
+	'inputCdnaSeqFile=s'=>\$inputCdnaSeqFile,
+	'inputDNAseqFile=s'=>\$inputDNAseqFile, 
+	'inputPepSeqFile=s'=>\$inputPepSeqFile,
+);
+
+my $dbh = DBI->connect("DBI:mysql:database=$dbName", $dbUser, $dbPWD);
+
+##############################
+#			     #
+# load gtf into hash         #
+#			     #
+##############################
+my (%isoform, $geneId, $geneSymbol, $isoformId, $isoformSymbol);
+my ($featureLine, @cols);
+
+open FF, "<$inputAnnoGtfFile";
+
+while($featureLine = <FF>){
+	chomp($featureLine);
+	next if($featureLine=~/#/);
+	@cols = split(/\t/, $featureLine);
+
+	$geneId = &getGeneIdInAttrs($cols[8]);
+	$geneSymbol = &getGeneSymbolInAttrs($cols[8]);
+	$isoformId = &getIsoformIdInAttrs($cols[8]);
+	$isoformSymbol = &getIsoformSymbolInAttrs($cols[8]);
+
+	#register isoform chr, strand, start, end and origin
+	if($cols[2] eq "transcript"){
+		${$isoform{$isoformId}}{"chr"} = $cols[0];
+		${$isoform{$isoformId}}{"strand"} = $cols[6];
+		${$isoform{$isoformId}}{"start"} = $cols[3];
+		${$isoform{$isoformId}}{"end"} = $cols[4];
+		${$isoform{$isoformId}}{"geneId"} = $geneId;
+		${$isoform{$isoformId}}{"geneSymbol"} = $geneSymbol;
+		${$isoform{$isoformId}}{"isoformSymbol"} = $isoformSymbol;
+		if($cols[1] eq "StringTie"){
+			${$isoform{$isoformId}}{"annoOrigin"} = "RNAseq";
+		}else{
+			${$isoform{$isoformId}}{"annoOrigin"} = $cols[1];
+		}
+	}elsif($cols[2] eq "exon"){
+
+		${$isoform{$isoformId}}{"exonSeries"} .= $cols[3] . ".." . $cols[4] . ",";
+
+	}
+}
+close FF;
+ 
+print "load gtf file finished.\n";
+
+##################################################################
+# generate DNA seq for isoform and distinguish intron and exon
+my (@isoformId, @exonIntron, @tmpExon, @exon, $exon, $query);
+@isoformId = keys(%isoform);
+
+foreach $isoformId(@isoformId){
+
+	# process exonSeries to cut final comma
+	${$isoform{$isoformId}}{"exonSeries"} = substr(${$isoform{$isoformId}}{"exonSeries"}, 0, length(${$isoform{$isoformId}}{"exonSeries"})-1);
+
+	# load isoform into mysql database
+	my $sql ="insert into isoformTable (isoformId, species, isoformSymbol, geneId, geneSymbol, chr, strand, start, end, exonSeries, annoOrigin) values (\"$isoformId\", \"$species\", \"" . ${$isoform{$isoformId}}{"isoformSymbol"} . "\", \"$geneId\", \"" . ${$isoform{$isoformId}}{"geneSymbol"} . "\", \"" . ${$isoform{$isoformId}}{"chr"} . "\", \"" . ${$isoform{$isoformId}}{"strand"} . "\", " . ${$isoform{$isoformId}}{"start"} . ", " . ${$isoform{$isoformId}}{"end"} . ", \"" . ${$isoform{$isoformId}}{"exonSeries"} . "\", \"" . ${$isoform{$isoformId}}{"annoOrigin"} . "\")";
+	$query = $dbh->prepare($sql);
+	$query->execute();
+
+}
+print "Finish load gtf into mysql.\n";
+
+###############################################
+print "Begin to load cDNA into hash.\n";
+%isoform =();
+my ($isoformId, $isoformSymbol, $geneId, $geneSymbol, $proteinId);
+# Load cDNA sequence into mysql 
+open FF, "<$inputCdnaSeqFile";
+# >rna65341 transcript_name:XM_024984141.1 gene_id:ENSBTAG00000049619 gene_name:GFOD1
+while(my $line =<FF>){
+	chomp($line);
+	if($line=~/>(.*) transcript_name:(.*) gene_id:(.*) gene_name:(.*)/){
+		$isoformId = $1;
+	}else{
+		$isoform{$isoformId}.=$line;
+	}
+}
+close FF;
+print "Finish load cDNA into hash.\n";
+my @isoformId = keys(%isoform);
+foreach $isoformId(@isoformId){
+	$query=$dbh->prepare("update isoformTable set cDNAseq=\"" . $isoform{$isoformId} . "\" where isoformId=\"" . $isoformId . "\"");
+	$query->execute();
+}
+%isoform = ();
+print "Finish load cDNA into mysql.\n";
+
+
+###############################################
+print "Begin to load DNA into hash.\n";
+%isoform =();
+my ($isoformId, $isoformSymbol, $geneId, $geneSymbol, $proteinId);
+# Load DNA sequence into mysql 
+open FF, "<$inputDNAseqFile";
+# >rna65341 transcript_name:XM_024984141.1 gene_id:ENSBTAG00000049619 gene_name:GFOD1
+while(my $line =<FF>){
+	chomp($line);
+	if($line=~/>(.*) transcript_name:(.*) gene_id:(.*) gene_name:(.*)/){
+		$isoformId = $1;
+	}else{
+		$isoform{$isoformId}.=$line;
+	}
+}
+close FF;
+print "Finish load DNA into hash.\n";
+my @isoformId = keys(%isoform);
+foreach $isoformId(@isoformId){
+	$query=$dbh->prepare("update isoformTable set DNAseq=\"" . $isoform{$isoformId} . "\" where isoformId=\"" . $isoformId . "\"");
+	$query->execute();
+}
+%isoform = ();
+print "Finish load DNA into mysql.\n";
+
+
+###############################################
+print "Begin to load PEP into hash.\n";
+%isoform =();
+my ($isoformId, $isoformSymbol, $geneId, $geneSymbol, $proteinId);
+# Load PEP sequence into mysql 
+open FF, "<$inputPepSeqFile";
+# >rna65341 transcript_name:XM_024984141.1 gene_id:ENSBTAG00000049619 gene_name:GFOD1 protein_id:XP_024839909.1
+while(my $line =<FF>){
+	chomp($line);
+	if($line=~/>(.*) transcript_name:(.*) gene_id:(.*) gene_name:(.*) protein_id:(.*)/){
+		$isoformId = $1;
+		${$isoform{$isoformId}}{"protein_id"} = $5;
+	}else{
+		${$isoform{$isoformId}}{"seq"}.=$line;
+	}
+}
+close FF;
+print "Finish load protein into hash.\n";
+my @isoformId = keys(%isoform);
+foreach $isoformId(@isoformId){
+	$query=$dbh->prepare("update isoformTable set pepSeq=\"" . ${$isoform{$isoformId}}{"seq"} . "\", protein_id=\"" . ${$isoform{$isoformId}}{"protein_id"} . "\" where isoformId=\"" . $isoformId . "\"");
+	$query->execute();
+}
+%isoform = ();
+print "Finish load protein into mysql.\n";
+
+
+sub getGeneIdInAttrs{
+        my ($attrsString) = $_[0];
+        my (@attrs, $attr);
+        @attrs = split(/;/, $attrsString);
+        foreach $attr(@attrs){
+                if($attr=~/gene_id "(.*)"/){
+                        return $1;
+                }
+        }
+        return "NA";
+}
+
+sub getIsoformIdInAttrs{
+        my ($attrsString) = $_[0];
+        my (@attrs, $attr);
+        @attrs = split(/;/, $attrsString);
+        foreach $attr(@attrs){
+                if($attr=~/transcript_id "(.*)"/){
+                        return $1;
+                }
+        }
+        return "NA";
+}
+
+
+sub getGeneSymbolInAttrs{
+        my ($attrsString) = $_[0];
+        my (@attrs, $attr);
+        @attrs = split(/;/, $attrsString);
+        foreach $attr(@attrs){
+                if($attr=~/gene_name "(.*)"/){
+                        return $1;
+                }
+        }
+        return "NA";
+}
+
+sub getIsoformSymbolInAttrs{
+        my ($attrsString) = $_[0];
+        my (@attrs, $attr);
+        @attrs = split(/;/, $attrsString);
+        foreach $attr(@attrs){
+                if($attr=~/transcript_name "(.*)"/){
+                        return $1;
+                }
+        }
+        return "NA";
+}
+
+
+
+sub getGeneIdInMultipleFeatures{
+        my ($multipleFeatureText) = $_[0];
+        my (@featureLines, $featureLine, @attrs);
+
+        @featureLines = split(/\n/, $multipleFeatureText);
+
+        foreach $featureLine(@featureLines){
+
+                @attrs = ();
+                @attrs = split(/;/, $featureLine);
+                foreach my $attr(@attrs){
+                        if($attr=~/gene_id "(.*)"/){
+                                return $1;
+                        }
+                }
+
+        }
+        return "";
+}

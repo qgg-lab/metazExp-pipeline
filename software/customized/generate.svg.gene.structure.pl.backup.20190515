@@ -1,0 +1,142 @@
+#!/usr/bin/perl
+use strict;
+my $gff=$ARGV[0];
+if($#ARGV<0){
+	print "$0 ann.gff3\n";
+	print "该程序用于生成svg格式的基因结构\n";
+	exit;
+}
+my (%transcript, $i, $line, @attr, @field, $transcriptId);
+open FF, "<$gff";
+while($line=<FF>){
+	chomp($line);
+	@field = ();
+	@field = split(/\t/, $line);
+	next if($field[2] ne "CDS" and $field[2] ne "three_prime_UTR" and $field[2] ne "five_prime_UTR");
+#2L      FlyBase three_prime_UTR 25402   26523   .       -       .       Parent=transcript:FBtr0309229
+#2L      FlyBase CDS     26524   26688   .       -       0       ID=CDS:FBpp0301168;Parent=transcript:FBtr0309229;protein_id=FBpp0301168
+#2L      FlyBase CDS     26766   26964   .       -       1       ID=CDS:FBpp0301168;Parent=transcript:FBtr0309229;protein_id=FBpp0301168
+#2L      FlyBase CDS     27053   27490   .       -       1       ID=CDS:FBpp0301168;Parent=transcript:FBtr0309229;protein_id=FBpp0301168
+#2L      FlyBase CDS     28015   28240   .       -       2       ID=CDS:FBpp0301168;Parent=transcript:FBtr0309229;protein_id=FBpp0301168
+#2L      FlyBase CDS     28733   28926   .       -       1       ID=CDS:FBpp0301168;Parent=transcript:FBtr0309229;protein_id=FBpp0301168
+	@attr = ();
+	@attr = split(/;/, $field[8]);
+	$transcriptId = "";
+	for($i=0; $i<=$#attr; $i++){
+		if($attr[$i]=~/Parent=(.*)/){
+			$transcriptId = $1;
+			last;
+		}
+	}
+
+	$transcript{$transcriptId}.=$field[3] . "," . $field[4] . "," . $field[2] . "#";
+}
+close FF;
+
+my @transcriptId = keys(%transcript);
+my (@feature, @corr, $j, $beg, @newCorr, $newLineNum, $totalBaseNum, $unitLen);
+my ($width, $height);
+for($i=0; $i<=$#transcriptId; $i++){
+
+	$transcriptId = $transcriptId[$i];
+	@corr = ();
+	@newCorr = ();
+	@feature = ();
+	@feature = split(/#/, $transcript{$transcriptId});
+	for($j=0; $j<=$#feature; $j++){
+		push @corr, [split /,/, $feature[$j]];		
+	}
+
+	#首先修改坐标，从1开始
+	$beg = $corr[0][0]-1;
+	for($j=0; $j<=$#corr; $j++){
+		$corr[$j][0] = $corr[$j][0] - $beg;
+		$corr[$j][1] = $corr[$j][1] - $beg;
+	}
+	#添加intron
+	$newLineNum = 0;
+	$newCorr[$newLineNum][0] = $corr[0][0];
+	$newCorr[$newLineNum][1] = $corr[0][1];
+	$newCorr[$newLineNum][2] = $corr[0][2];
+	for($j=1; $j<=$#corr; $j++){
+		if($corr[$j][0]-$corr[$j-1][1]>1){
+			$newLineNum++;
+			$newCorr[$newLineNum][0] = $corr[$j-1][1]+1;
+			$newCorr[$newLineNum][1] = $corr[$j][0] - 1;
+			$newCorr[$newLineNum][2] = "Intron";
+		}
+		$newLineNum++;
+		$newCorr[$newLineNum][0] = $corr[$j][0];
+		$newCorr[$newLineNum][1] = $corr[$j][1];
+		$newCorr[$newLineNum][2] = $corr[$j][2];
+	}
+
+	#输出此transcriptId的坐标
+	#for($j=0; $j<=$#newCorr; $j++){
+	#	print join("\t", $newCorr[$j][0], $newCorr[$j][1], $newCorr[$j][2]) . "\n";
+	#}
+	
+	#输出svg
+	$totalBaseNum = $newCorr[$#newCorr][1];
+	$unitLen = 1000/$totalBaseNum;
+	my ($cdsY, $utrY, $cdsHeight, $utrHeight, $intronY);
+	$cdsY = 50;
+	$cdsHeight = 20;
+	$utrY = 54;
+	$utrHeight = 12;
+	$intronY = 100;
+	my ($posX, $posY);
+	for($j=0; $j<=$#newCorr; $j++){
+		#计算宽度和高度
+		$width = ($newCorr[$j][1] - $newCorr[$j][0] + 1) * $unitLen;
+		if($newCorr[$j][2] eq "CDS"){
+			$height = $cdsHeight;
+			$posY = $cdsY;
+		}else{
+			$height = $utrHeight;
+			$posY = $utrY;
+		}
+		#计算盒子输出位置
+		$posX = $newCorr[$j][0] * $unitLen;
+
+		#计算内含子左侧线段的开始和结束位点
+		my ($leftIntronX, $leftIntronY, $midIntronX, $midIntronY, $rightIntronX, $rightIntronY);
+		if($newCorr[$j][2] eq "Intron"){
+
+			$leftIntronX = $newCorr[$j][0] * $unitLen;
+			if($newCorr[$j-1][2] eq "CDS"){
+				$leftIntronY = $cdsY + $cdsHeight;
+			}else{
+				$leftIntronY = $utrY + $utrHeight;
+			}
+
+			$rightIntronX = $newCorr[$j][1] * $unitLen;
+			if($newCorr[$j+1][2] eq "CDS"){
+				$rightIntronY = $cdsY + $cdsHeight;
+			}else{
+				$rightIntronY = $utrY + $utrHeight;				
+			}
+
+			$midIntronX = ($leftIntronX + $rightIntronX) / 2;
+			$midIntronY = $intronY;
+		}	
+
+		#计算内含子右侧线段的开始和结束位点
+		if($newCorr[$j][2] eq "CDS"){
+			print "<rect x=\'". $posX . "\' y=\'" . $posY . "\' width=\'" . $width . "\' height=\'" . $height . "\' style=\"fill:#2E8B57;\"/>\n";
+		}elsif($newCorr[$j][2] eq "five_prime_UTR" or $newCorr[$j][2] eq "three_prime_UTR"){
+			print "<rect x=\'". $posX . "\' y=\'" . $posY . "\' width=\'" . $width . "\' height=\'" . $height . "\' style=\"fill:#7f7f7f;\"/>\n";
+		}elsif($newCorr[$j][2] eq "Intron"){
+			print "<line x1=\"" . $leftIntronX . "\" y1=\"" . $leftIntronY . "\" x2=\"" . $midIntronX . "\" y2=\"" . $midIntronY . "\" style=\"stroke:rgb(105,105,105);stroke-width:1\"/>\n";
+			print "<line x1=\"" . $midIntronX . "\" y1=\"" . $midIntronY . "\" x2=\"" . $rightIntronX . "\" y2=\"" . $rightIntronY . "\" style=\"stroke:rgb(105,105,105);stroke-width:1\"/>\n";
+
+		}
+	}
+
+	<STDIN>;
+}
+
+
+
+
+

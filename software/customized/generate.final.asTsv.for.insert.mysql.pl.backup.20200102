@@ -1,0 +1,562 @@
+#!/usr/bin/perl
+use strict;
+use Getopt::Long;
+use DBI;
+if($#ARGV<0){
+	print "\nperl $0 \\\n" . 
+                "--genomeFasta genome.fa \\\n" .
+                "--asCatalogFileList A3SS.txt,A5SS.txt,MXE.txt,RI.txt,SE.txt \\\n" .
+                "--asTypeList A3SS,A5SS,MXE,RI,SE \\\n" .
+                "--asAltExonSeriesAndTrsptIdList ../015-compare-as-and-gtf/as.with.long..short.alt.trsptIdList.tsv \\\n" .
+		"--asOriginTsv origin.tsv \\\n" .
+		"--orthAsTsv ../../9902/orthAs.tsv \\\n" .
+		"--outputAsMysqlTsv as.mysql.insert.tsv\n";
+	exit;
+}
+
+my ($genomeFasta, $asCatalogFileList, $asTypeList, $asAltExonSeriesAndTrsptIdList, $orthAsTsv, $asOriginTsv, $outputAsMysqlTsv);
+
+GetOptions(
+        'genomeFasta=s'=>\$genomeFasta,
+        'asCatalogFileList=s'=>\$asCatalogFileList,
+        'asTypeList=s'=>\$asTypeList,
+        'asAltExonSeriesAndTrsptIdList=s'=>\$asAltExonSeriesAndTrsptIdList,
+	'orthAsTsv=s'=>\$orthAsTsv,
+	'asOriginTsv=s'=>\$asOriginTsv,
+	'outputAsMysqlTsv=s'=>\$outputAsMysqlTsv,
+);
+my ($asId);
+
+# 将基因组序列读入到hash中
+my (%genomeSeq, @tt, $line, $id);
+open FF, "<$genomeFasta";
+while($line=<FF>){
+	chomp($line);
+	if($line=~/>(.*)/){
+		$id = $1;
+		@tt = ();
+		@tt = split(/ /, $id);
+		$id = $tt[0];
+	}else{
+		$genomeSeq{$id}.=$line;
+	}
+}
+close FF;
+
+# 将AS位置及类型读入到hash中
+my (%as, $asHref, @titleField, @valueField, @asFile, $asFile, @asType, $asType, $i, $j); 
+$asHref = \%as;
+@asFile = split(/,/, $asCatalogFileList);
+@asType = split(/,/, $asTypeList);
+# 打开每个AS文件
+for($i=0; $i<=$#asFile; $i++){
+	$asFile = $asFile[$i];
+	$asType = $asType[$i];
+	# 将该AS文件读入到hash中
+	&readAsIntoHash($asFile, $asType, $asHref);
+}
+
+
+
+
+### 将AS的两个外显子串位置及其对应的转录本编号等信息读入到hash中
+my (%tmpAs, $tmpAsHref);
+$tmpAsHref = \%tmpAs;
+open FF, "<$asAltExonSeriesAndTrsptIdList";
+# ASID chr strand longAltExonSeries longAltEnsemblTrsptIdList longAltImprovedTrsptIdList shortAltExonSeries shortAltEnsemblTrsptIdList shortAltImprovedTrsptIdList
+$line = <FF>;
+chomp($line);
+@titleField = ();
+@titleField = split(/\t/, $line);
+while($line=<FF>){
+	chomp($line);
+	@valueField = split(/\t/, $line);
+	for($i=0; $i<=$#valueField; $i++){
+		$tmpAsHref->{$titleField[$i]} = $valueField[$i];
+	}
+	$asId = $tmpAsHref->{"ASID"};
+	# 将AS的相关字段读入到总AS中
+	$asHref->{$asId}->{"longAltExonSeries"} = $tmpAsHref->{"longAltExonSeries"};
+	$asHref->{$asId}->{"longAltEnsemblTrsptIdList"} = $tmpAsHref->{"longAltEnsemblTrsptIdList"};
+	$asHref->{$asId}->{"longAltImprovedTrsptIdList"} = $tmpAsHref->{"longAltImprovedTrsptIdList"};
+	$asHref->{$asId}->{"shortAltExonSeries"} = $tmpAsHref->{"shortAltExonSeries"};
+	$asHref->{$asId}->{"shortAltEnsemblTrsptIdList"} = $tmpAsHref->{"shortAltEnsemblTrsptIdList"};
+	$asHref->{$asId}->{"shortAltImprovedTrsptIdList"} = $tmpAsHref->{"shortAltImprovedTrsptIdList"};
+
+	# 生成 longAltTrsptIdList
+	if($asHref->{$asId}->{"longAltEnsemblTrsptIdList"} ne "-" and $asHref->{$asId}->{"longAltImprovedTrsptIdList"} ne "-"){
+		$asHref->{$asId}->{"longAltTrsptIdList"} = $asHref->{$asId}->{"longAltEnsemblTrsptIdList"} . "," . $asHref->{$asId}->{"longAltImprovedTrsptIdList"};
+	}elsif($asHref->{$asId}->{"longAltEnsemblTrsptIdList"} ne "-" and $asHref->{$asId}->{"longAltImprovedTrsptIdList"} eq "-"){
+		$asHref->{$asId}->{"longAltTrsptIdList"} = $asHref->{$asId}->{"longAltEnsemblTrsptIdList"};
+	}elsif($asHref->{$asId}->{"longAltEnsemblTrsptIdList"} eq "-" and $asHref->{$asId}->{"longAltImprovedTrsptIdList"} ne "-"){
+		$asHref->{$asId}->{"longAltTrsptIdList"} = $asHref->{$asId}->{"longAltImprovedTrsptIdList"} ne "-";
+	}else{
+		$asHref->{$asId}->{"longAltTrsptIdList"} = "-";
+	}
+
+	# 成 shortAltTrsptIdList
+	if($asHref->{$asId}->{"shortAltEnsemblTrsptIdList"} ne "-" and $asHref->{$asId}->{"shortAltImprovedTrsptIdList"} ne "-"){
+		$asHref->{$asId}->{"shortAltTrsptIdList"} = $asHref->{$asId}->{"shortAltEnsemblTrsptIdList"} . "," . $asHref->{$asId}->{"shortAltImprovedTrsptIdList"};
+	}elsif($asHref->{$asId}->{"shortAltEnsemblTrsptIdList"} ne "-" and $asHref->{$asId}->{"shortAltImprovedTrsptIdList"} eq "-"){
+		$asHref->{$asId}->{"shortAltTrsptIdList"} = $asHref->{$asId}->{"shortAltEnsemblTrsptIdList"};
+	}elsif($asHref->{$asId}->{"shortAltEnsemblTrsptIdList"} eq "-" and $asHref->{$asId}->{"shortAltImprovedTrsptIdList"} ne "-"){
+		$asHref->{$asId}->{"shortAltTrsptIdList"} = $asHref->{$asId}->{"shortAltImprovedTrsptIdList"} ne "-";
+	}else{
+		$asHref->{$asId}->{"shortAltTrsptIdList"} = "-";
+	}
+}
+close FF;
+
+
+
+
+# ########################
+# 打开orthAs.tsv，将AS对应的orthId及保守水平读入到hash
+my ($asIdPos);
+%tmpAs = ();
+$tmpAsHref = \%tmpAs;
+open FF, "<$orthAsTsv";
+# ASID 				orthAsId 		conservLevel
+# ZMAYA3SS0000005850 		MonA3SS0001	Monocotyledon
+# ZMAYA3SS0000008712 		DicA3SS0001	Dicotyledon
+# ZMAYA3SS0000001234 		AngA3SS0001	Angiosperm
+$line = <FF>;
+chomp($line);
+@titleField = ();
+@titleField = split(/\t/, $line);
+# 找出asId在orthAs.tsv文件中的哪一列
+for($i=0; $i<=$#titleField; $i++){
+	if(uc($titleField[$i]) eq "ASID"){
+		$asIdPos = $i;
+		last;
+	}
+}
+while($line=<FF>){
+	chomp($line);
+	@valueField = ();
+	@valueField = split(/\t/, $line);
+	$asId = $valueField[$asIdPos];
+	for($i=0; $i<=$#valueField; $i++){
+		$tmpAsHref->{$titleField[$i]} = $valueField[$i];
+	}
+
+	# 将对应orthId
+	$asHref->{$asId}->{"orthAsId"} = $tmpAsHref->{"orthAsId"};
+	$asHref->{$asId}->{"conservLevel"} = $tmpAsHref->{"conservLevel"};
+}
+close FF;
+
+
+######################################################
+#
+#  为AS生成longAltSeq和shortAltSeq
+#
+my @asId = keys(%as);
+my ($exon1Seq, $exon2Seq, $exon3Seq, $exon4Seq, $editSiteInAltSeq);
+foreach $asId(@asId){
+	# 为longAlt和shortAlt分别生成相互转换操作：
+	# editSiteInAltSeq、cutSizeInLongAlt、insertSizeInLongAlt、cutSizeInshortAlt、insertSizeInShortAlt
+	# 按照一定规则操作，就可以将longAltSeq转换为shortAltSeq，或者从shortAltSeq转换为longAltSeq
+	
+	# A3SS
+	if($asHref->{$asId}->{"asType"} eq "A3SS"){
+
+		if($asHref->{$asId}->{"strand"} eq "+"){
+
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"flankingES"}, $asHref->{$asId}->{"flankingEE"} - ($asHref->{$asId}->{"flankingES"} + 1) + 1));
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"longExonStart_0base"}, $asHref->{$asId}->{"longExonEnd"} - ($asHref->{$asId}->{"longExonStart_0base"} + 1) + 1));
+			$asHref->{$asId}->{"editSiteInAltSeq"} = length($exon1Seq);
+			$asHref->{$asId}->{"longAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = $asHref->{$asId}->{"shortES"} - ($asHref->{$asId}->{"longExonStart_0base"} + 1) + 1;
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = 0;
+
+			# shortAlt
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"shortES"}, $asHref->{$asId}->{"shortEE"} - ($asHref->{$asId}->{"shortES"} + 1) + 1));
+			$asHref->{$asId}->{"shortAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = 0;
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = $asHref->{$asId}->{"cutSizeInLongAlt"};
+			
+		}else{
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"flankingES"}, $asHref->{$asId}->{"flankingEE"} - ($asHref->{$asId}->{"flankingES"} + 1) + 1));
+			$exon1Seq = reverse($exon1Seq);
+			$exon1Seq =~tr/ACGT/TGCA/;
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"longExonStart_0base"}, $asHref->{$asId}->{"longExonEnd"} - ($asHref->{$asId}->{"longExonStart_0base"} + 1) + 1));
+			$exon2Seq = reverse($exon2Seq);
+			$exon2Seq =~tr/ACGT/TGCA/;
+			$asHref->{$asId}->{"longAltSeq"} = $exon1Seq . $exon2Seq; #
+			$asHref->{$asId}->{"editSiteInAltSeq"} = length($exon1Seq);
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = $asHref->{$asId}->{"longExonEnd"} - ($asHref->{$asId}->{"shortEE"} + 1) + 1;
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = 0;
+
+			# shortAlt
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"shortES"}, $asHref->{$asId}->{"shortEE"} - ($asHref->{$asId}->{"shortES"} + 1) + 1));
+			$exon2Seq = reverse($exon2Seq);
+			$exon2Seq =~tr/ACGT/TGCA/;
+			$asHref->{$asId}->{"shortAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = 0;
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = $asHref->{$asId}->{"cutSizeInLongAlt"};
+	
+		}	
+	}
+
+	# A5SS
+	if($asHref->{$asId}->{"asType"} eq "A5SS"){
+
+		if($asHref->{$asId}->{"strand"} eq "+"){
+
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"longExonStart_0base"}, $asHref->{$asId}->{"longExonEnd"} - ($asHref->{$asId}->{"longExonStart_0base"} + 1) + 1));
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"flankingES"}, $asHref->{$asId}->{"flankingEE"} - ($asHref->{$asId}->{"flankingES"} + 1) + 1));
+			$asHref->{$asId}->{"editSiteInAltSeq"} = $asHref->{$asId}->{"shortEE"} - ($asHref->{$asId}->{"shortES"} + 1) + 1;
+			$asHref->{$asId}->{"longAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = $asHref->{$asId}->{"longExonEnd"} - ($asHref->{$asId}->{"shortEE"} + 1) + 1;
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = 0;
+
+			# shortAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"shortES"}, $asHref->{$asId}->{"shortEE"} - ($asHref->{$asId}->{"shortES"} + 1) + 1));
+			$asHref->{$asId}->{"shortAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = 0;
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = $asHref->{$asId}->{"cutSizeInLongAlt"};
+			
+		}else{
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"longExonStart_0base"}, $asHref->{$asId}->{"longExonEnd"} - ($asHref->{$asId}->{"longExonStart_0base"} + 1) + 1));
+			$exon1Seq = reverse($exon1Seq);
+			$exon1Seq =~tr/ACGT/TGCA/;
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"flankingES"}, $asHref->{$asId}->{"flankingEE"} - ($asHref->{$asId}->{"flankingES"} + 1) + 1));
+			$exon2Seq = reverse($exon2Seq);
+			$exon2Seq =~tr/ACGT/TGCA/;
+			$asHref->{$asId}->{"longAltSeq"} = $exon1Seq . $exon2Seq; #
+			$asHref->{$asId}->{"editSiteInAltSeq"} = $asHref->{$asId}->{"shortEE"} - ($asHref->{$asId}->{"shortES"} + 1) + 1;
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = $asHref->{$asId}->{"shortES"} - ($asHref->{$asId}->{"longExonStart_0base"} + 1) + 1;
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = 0;
+
+			# shortAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"shortES"}, $asHref->{$asId}->{"shortEE"} - ($asHref->{$asId}->{"shortES"} + 1) + 1));
+			$exon1Seq = reverse($exon2Seq);
+			$exon1Seq =~tr/ACGT/TGCA/;
+			$asHref->{$asId}->{"shortAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = 0;
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = $asHref->{$asId}->{"cutSizeInLongAlt"};	
+		}
+	}
+
+	# RI
+	if($asHref->{$asId}->{"asType"} eq "RI"){
+
+		if($asHref->{$asId}->{"strand"} eq "+"){
+
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"riExonStart_0base"}, $asHref->{$asId}->{"riExonEnd"} - ($asHref->{$asId}->{"riExonStart_0base"} + 1) + 1));
+			$asHref->{$asId}->{"editSiteInAltSeq"} = $asHref->{$asId}->{"upstreamEE"} - ($asHref->{$asId}->{"upstreamES"} + 1) + 1;
+			$asHref->{$asId}->{"longAltSeq"} = $exon1Seq;
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = $asHref->{$asId}->{"downstreamES"} - ($asHref->{$asId}->{"upstreamEE"} + 1) + 1;
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = 0;
+
+			# shortAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"upstreamES"}, $asHref->{$asId}->{"upstreamEE"} - ($asHref->{$asId}->{"upstreamES"} + 1) + 1));
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"downstreamES"}, $asHref->{$asId}->{"downstreamEE"} - ($asHref->{$asId}->{"downstreamES"} + 1) + 1));
+			$asHref->{$asId}->{"shortAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = 0;
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = $asHref->{$asId}->{"cutSizeInLongAlt"};
+			
+		}else{
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"riExonStart_0base"}, $asHref->{$asId}->{"riExonEnd"} - ($asHref->{$asId}->{"riExonStart_0base"} + 1) + 1));
+			$exon1Seq = reverse($exon1Seq);
+			$exon1Seq =~tr/ACGT/TGCA/;
+			$asHref->{$asId}->{"editSiteInAltSeq"} = $asHref->{$asId}->{"downstreamEE"} - ($asHref->{$asId}->{"downstreamES"} + 1) + 1; # 
+			$asHref->{$asId}->{"longAltSeq"} = $exon1Seq;
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = $asHref->{$asId}->{"downstreamES"} - ($asHref->{$asId}->{"upstreamEE"} + 1) + 1;
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = 0;
+
+			# shortAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"downstreamES"}, $asHref->{$asId}->{"downstreamEE"} - ($asHref->{$asId}->{"downstreamES"} + 1) + 1));
+			$exon1Seq = reverse($exon1Seq);
+			$exon1Seq =~tr/ACGT/TGCA/;
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"upstreamES"}, $asHref->{$asId}->{"upstreamEE"} - ($asHref->{$asId}->{"upstreamES"} + 1) + 1));
+			$exon2Seq = reverse($exon2Seq);
+			$exon2Seq =~tr/ACGT/TGCA/;
+			$asHref->{$asId}->{"shortAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = 0;
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = $asHref->{$asId}->{"cutSizeInLongAlt"};
+		}
+	}
+
+	# SE
+	if($asHref->{$asId}->{"asType"} eq "SE"){
+		if($asHref->{$asId}->{"strand"} eq "+"){
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"upstreamES"}, $asHref->{$asId}->{"upstreamEE"} - ($asHref->{$asId}->{"upstreamES"} + 1) + 1));
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"exonStart_0base"}, $asHref->{$asId}->{"exonEnd"} - ($asHref->{$asId}->{"exonStart_0base"} + 1) + 1));
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"downstreamES"}, $asHref->{$asId}->{"downstreamEE"} - ($asHref->{$asId}->{"downstreamES"} + 1) + 1));
+			$asHref->{$asId}->{"editSiteInAltSeq"} = length($exon1Seq);
+			$asHref->{$asId}->{"longAltSeq"} = $exon1Seq . $exon2Seq . $exon3Seq;
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = length($exon2Seq);
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = 0;
+
+			# shortAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"upstreamES"}, $asHref->{$asId}->{"upstreamEE"} - ($asHref->{$asId}->{"upstreamES"} + 1) + 1));
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"downstreamES"}, $asHref->{$asId}->{"downstreamEE"} - ($asHref->{$asId}->{"downstreamES"} + 1) + 1));
+			$asHref->{$asId}->{"shortAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = 0;
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = $asHref->{$asId}->{"cutSizeInLongAlt"};			
+		}else{
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"downstreamES"}, $asHref->{$asId}->{"downstreamEE"} - ($asHref->{$asId}->{"downstreamES"} + 1) + 1));
+			$exon1Seq = reverse($exon1Seq);
+			$exon1Seq=~tr/ACGT/TGCA/;
+
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"exonStart_0base"}, $asHref->{$asId}->{"exonEnd"} - ($asHref->{$asId}->{"exonStart_0base"} + 1) + 1));
+			$exon2Seq = reverse($exon2Seq);
+			$exon2Seq =~tr/ACGT/TGCA/;
+
+			$exon3Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"upstreamES"}, $asHref->{$asId}->{"upstreamEE"} - ($asHref->{$asId}->{"upstreamES"} + 1) + 1));
+			$exon3Seq = reverse($exon3Seq);
+			$exon3Seq =~tr/ACGT/TGCA/;
+
+			$asHref->{$asId}->{"editSiteInAltSeq"} = length($exon1Seq);
+			$asHref->{$asId}->{"longAltSeq"} = $exon1Seq . $exon2Seq . $exon3Seq;
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = length($exon2Seq);
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = 0;
+
+			# shortAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"downstreamES"}, $asHref->{$asId}->{"downstreamEE"} - ($asHref->{$asId}->{"downstreamES"} + 1) + 1));
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"upstreamES"}, $asHref->{$asId}->{"upstreamEE"} - ($asHref->{$asId}->{"upstreamES"} + 1) + 1));
+			$asHref->{$asId}->{"shortAltSeq"} = $exon1Seq . $exon2Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = 0;
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = $asHref->{$asId}->{"cutSizeInLongAlt"};
+		}
+	}
+
+	# MXE
+	if($asHref->{$asId}->{"asType"} eq "MXE"){
+
+		if($asHref->{$asId}->{"strand"} eq "+"){
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"upstreamES"}, $asHref->{$asId}->{"upstreamEE"} - ($asHref->{$asId}->{"upstreamES"} + 1) + 1));
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"1stExonStart_0base"}, $asHref->{$asId}->{"1stExonEnd"} - ($asHref->{$asId}->{"1stExonStart_0base"} + 1) + 1));
+			$exon3Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"2ndExonStart_0base"}, $asHref->{$asId}->{"2ndExonEnd"} - ($asHref->{$asId}->{"2ndExonStart_0base"} + 1) + 1));
+			$exon4Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"downstreamES"}, $asHref->{$asId}->{"downstreamEE"} - ($asHref->{$asId}->{"downstreamES"} + 1) + 1));
+			$asHref->{$asId}->{"editSiteInAltSeq"} = length($exon1Seq);
+			$asHref->{$asId}->{"longAltSeq"} = $exon1Seq . $exon2Seq . $exon4Seq;
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = length($exon2Seq);
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = length($exon3Seq);;
+
+			# shortAlt 
+			$asHref->{$asId}->{"shortAltSeq"} = $exon1Seq . $exon3Seq . $exon4Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = length($exon3Seq);
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = length($exon2Seq);
+			
+		}else{
+			# longAlt
+			$exon1Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"upstreamES"}, $asHref->{$asId}->{"upstreamEE"} - ($asHref->{$asId}->{"upstreamES"} + 1) + 1));
+			$exon1Seq = reverse($exon1Seq);
+			$exon1Seq =~tr/ACGT/TGCA/;
+			$exon2Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"1stExonStart_0base"}, $asHref->{$asId}->{"1stExonEnd"} - ($asHref->{$asId}->{"1stExonStart_0base"} + 1) + 1));
+			$exon2Seq = reverse($exon2Seq);
+			$exon2Seq =~tr/ACGT/TGCA/;
+			$exon3Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"2ndExonStart_0base"}, $asHref->{$asId}->{"2ndExonEnd"} - ($asHref->{$asId}->{"2ndExonStart_0base"} + 1) + 1));
+			$exon3Seq = reverse($exon3Seq);
+			$exon3Seq =~tr/ACGT/TGCA/;
+			$exon4Seq = uc(substr($genomeSeq{$asHref->{$asId}->{"chr"}}, $asHref->{$asId}->{"downstreamES"}, $asHref->{$asId}->{"downstreamEE"} - ($asHref->{$asId}->{"downstreamES"} + 1) + 1));
+			$exon4Seq = reverse($exon4Seq);
+			$exon4Seq =~tr/ACGT/TGCA/;
+			$asHref->{$asId}->{"editSiteInAltSeq"} = length($exon4Seq);
+			$asHref->{$asId}->{"longAltSeq"} = $exon4Seq . $exon2Seq . $exon1Seq;
+			$asHref->{$asId}->{"cutSizeInLongAlt"} = length($exon2Seq);
+			$asHref->{$asId}->{"insertSizeInLongAlt"} = length($exon3Seq);;
+
+			# shortAlt
+			$asHref->{$asId}->{"shortAltSeq"} = $exon4Seq . $exon3Seq . $exon1Seq;
+			$asHref->{$asId}->{"cutSizeInShortAlt"} = length($exon3Seq);
+			$asHref->{$asId}->{"insertSizeInShortAlt"} = length($exon2Seq);
+		}
+	}
+}
+
+# 将AS注释来源读入到hash中，注释来源包括：ensemblGtf, improvedGtf, improvedGtf+RNAseqMapping
+# ASID    ensemblGtf      improvedGtf     improvedGtf+RNAseqMapping
+# ZMAYA3SS0000023346      0       0       1
+# ZMAYA3SS0000014147      1       0       0
+my %tmpAs = ();
+$tmpAsHref = \%tmpAs;
+open FF, "<$asOriginTsv";
+$line=<FF>;
+chomp($line);
+@titleField = ();
+@titleField = split(/\t/, $line);
+while($line=<FF>){
+	chomp($line);
+	@valueField = ();
+	@valueField = split(/\t/, $line);
+	$asId = $valueField[0];
+	for($i=0; $i<=$#valueField; $i++){
+		$tmpAsHref->{$titleField[$i]} = $valueField[$i];
+	}
+	if($tmpAsHref->{"ensemblGtf"} == 1){
+		$asHref->{$asId}->{"annoOrigin"} = "ensemblGtf";
+	}
+	if($tmpAsHref->{"improvedGtf"} == 1){
+		$asHref->{$asId}->{"annoOrigin"} = "improvedGtf";
+	}
+	if($tmpAsHref->{"RNAseqMapping"} == 1){
+		$asHref->{$asId}->{"annoOrigin"} = "RNAseqMapping";
+	}
+
+}
+close FF;
+
+# 对AS进行归类，将相同gene的AS归置在一起提供给同组所有as
+my (%geneToAsIdList, $geneToAsIdListHref);
+$geneToAsIdListHref = \%geneToAsIdList;
+my @asId = keys(%as);
+foreach $asId(@asId){
+	$geneToAsIdListHref->{$asHref->{$asId}->{"GeneID"}} .= $asId . ",";
+}
+
+
+
+# ===== 生成mysql需要的TSV文件 =====
+open WW, ">$outputAsMysqlTsv";
+my ($fieldString, $valueString);
+@asId = keys(%as);
+foreach $asId(@asId){
+	$fieldString = join(", ", "asId", "chr", "strand", "geneId", "geneSymbol", "1stExonEnd", "1stExonStart_0base", "2ndExonEnd", "2ndExonStart_0base", "downstreamEE", "downstreamES", "exonEnd", "exonStart_0base", "flankingEE", "flankingES", "longExonEnd", "longExonStart_0base", "riExonEnd", "riExonStart_0base", "shortEE", "shortES", "upstreamEE", "upstreamES", "longAltExonSeries", "longAltTrsptIdList", "longAltEnsemblTrsptIdList", "longAltImprovedTrsptIdList", "shortAltExonSeries", "shortAltTrsptIdList", "shortAltEnsemblTrsptIdList", "shortAltImprovedTrsptIdList", "editSiteInAltSeq", "cutSizeInLongAlt", "insertSizeInLongAlt", "cutSizeInShortAlt", "insertSizeInShortAlt", "conservAsId", "conservLevel", "annoOrigin", "associatedAsList", "longAltSeq", "shortAltSeq");
+
+	if(not exists($asHref->{$asId}->{"conservAsId"})){
+		$asHref->{$asId}->{"conservAsId"} = "-";
+	}
+	if(not exists($asHref->{$asId}->{"conservLevel"})){
+		$asHref->{$asId}->{"conservLevel"} = "-";
+	}
+
+	$asHref->{$asId}->{"associatedAsIdList"} = $geneToAsIdListHref->{$asHref->{$asId}->{"GeneID"}};
+	$asHref->{$asId}->{"associatedAsIdList"} = &removeAsIdFromAsIdList($asHref->{$asId}->{"associatedAsIdList"}, $asId);
+
+	$valueString = join(", ", $asId, $asHref->{$asId}->{"chr"}, $asHref->{$asId}->{"strand"}, 
+	$asHref->{$asId}->{"GeneID"}, $asHref->{$asId}->{"geneSymbol"},
+	$asHref->{$asId}->{"1stExonEnd"}, $asHref->{$asId}->{"1stExonStart_0base"}, 
+	$asHref->{$asId}->{"2ndExonEnd"}, $asHref->{$asId}->{"2ndExonStart_0base"},
+	$asHref->{$asId}->{"downstreamEE"}, $asHref->{$asId}->{"downstreamES"},
+	$asHref->{$asId}->{"exonEnd"}, $asHref->{$asId}->{"exonStart_0base"},
+	$asHref->{$asId}->{"flankingEE"}, $asHref->{$asId}->{"flankingES"},
+	$asHref->{$asId}->{"longExonEnd"}, $asHref->{$asId}->{"longExonStart_0base"},
+	$asHref->{$asId}->{"riExonEnd"}, $asHref->{$asId}->{"riExonStart_0base"},
+	$asHref->{$asId}->{"shortEE"}, $asHref->{$asId}->{"shortES"},
+	$asHref->{$asId}->{"upstreamEE"}, $asHref->{$asId}->{"upstreamES"},
+	$asHref->{$asId}->{"longAltExonSeries"}, $asHref->{$asId}->{"longAltTrsptIdList"}, $asHref->{$asId}->{"longAltEnsemblTrsptIdList"},
+	$asHref->{$asId}->{"longAltImprovedTrsptIdList"}, $asHref->{$asId}->{"shortAltExonSeries"},$asHref->{$asId}->{"shortAltTrsptIdList"}, 
+	$asHref->{$asId}->{"shortAltEnsemblTrsptIdList"}, $asHref->{$asId}->{"shortAltImprovedTrsptIdList"}, 
+	$asHref->{$asId}->{"editSiteInAltSeq"},	$asHref->{$asId}->{"cutSizeInLongAlt"}, $asHref->{$asId}->{"insertSizeInLongAlt"},
+	$asHref->{$asId}->{"cutSizeInShortAlt"}, $asHref->{$asId}->{"insertSizeInShortAlt"},
+	$asHref->{$asId}->{"conservAsId"}, $asHref->{$asId}->{"conservLevel"},
+	$asHref->{$asId}->{"annoOrigin"},
+	$asHref->{$asId}->{"associatedAsIdList"},
+	$asHref->{$asId}->{"longAltSeq"}, $asHref->{$asId}->{"shortAltSeq"}
+	);
+	print WW $fieldString . "___" . $valueString . "\n";
+}
+close WW;
+
+#######################################################
+#
+# 将一个AS文件中所有的坐标信息读入到hash中
+# #####################################################
+sub readAsIntoHash{
+	my ($asFile, $asType, $href) = @_;
+	my (@titleField, @valueField, $j, $line, $asId);
+	# 打开AS文件
+	open FF, "<$asFile";
+	# 读取字段名称
+	# ASID    GeneID  geneSymbol      chr     strand  longExonStart_0base     longExonEnd     shortES shortEE flankingES      flankingEE
+	$line = <FF>;
+	chomp($line);
+	@titleField = ();
+	@titleField = split(/\t/, $line);
+	while($line=<FF>){
+		chomp($line);
+		@valueField = ();
+		@valueField = split(/\t/, $line);
+		$asId = $valueField[0];
+		# 将as的每个字段读入hash中
+		for($j=0; $j<=$#valueField; $j++){
+			if($valueField[$j]=~/"(.*)"/){
+				$href->{$asId}->{$titleField[$j]} = $1;
+			}else{
+				$href->{$asId}->{$titleField[$j]} = $valueField[$j];
+			}
+		}
+		# 设置AS的类型
+		$href->{$asId}->{"asType"} = $asType;
+		# 将无值的字段值设为-1，表示不存在
+		if(not exists($href->{$asId}->{"1stExonEnd"})){
+			$href->{$asId}->{"1stExonEnd"} = -1;
+		}
+		if(not exists($href->{$asId}->{"1stExonStart_0base"})){
+			$href->{$asId}->{"1stExonStart_0base"} = -1;
+		}
+		if(not exists($href->{$asId}->{"2ndExonEnd"})){
+			$href->{$asId}->{"2ndExonEnd"} = -1;
+		}
+		if(not exists($href->{$asId}->{"2ndExonStart_0base"})){
+			$href->{$asId}->{"2ndExonStart_0base"} = -1;
+		}
+		if(not exists($href->{$asId}->{"downstreamEE"})){
+			$href->{$asId}->{"downstreamEE"} = -1;
+		}
+		if(not exists($href->{$asId}->{"downstreamES"})){
+			$href->{$asId}->{"downstreamES"} = -1;
+		}
+		if(not exists($href->{$asId}->{"exonEnd"})){
+			$href->{$asId}->{"exonEnd"} = -1;
+		}
+		if(not exists($href->{$asId}->{"exonStart_0base"})){
+			$href->{$asId}->{"exonStart_0base"} = -1;
+		}
+		if(not exists($href->{$asId}->{"flankingEE"})){
+			$href->{$asId}->{"flankingEE"} = -1;
+		}
+		if(not exists($href->{$asId}->{"flankingES"})){
+			$href->{$asId}->{"flankingES"} = -1;
+		}
+		if(not exists($href->{$asId}->{"longExonEnd"})){
+			$href->{$asId}->{"longExonEnd"} = -1;
+		}
+		if(not exists($href->{$asId}->{"longExonStart_0base"})){
+			$href->{$asId}->{"longExonStart_0base"} = -1;
+		}
+		if(not exists($href->{$asId}->{"riExonEnd"})){
+			$href->{$asId}->{"riExonEnd"} = -1;
+		}
+		if(not exists($href->{$asId}->{"riExonStart_0base"})){
+			$href->{$asId}->{"riExonStart_0base"} = -1;
+		}
+		if(not exists($href->{$asId}->{"shortEE"})){
+			$href->{$asId}->{"shortEE"} = -1;
+		}
+		if(not exists($href->{$asId}->{"shortES"})){
+			$href->{$asId}->{"shortES"} = -1;
+		}
+		if(not exists($href->{$asId}->{"upstreamEE"})){
+			$href->{$asId}->{"upstreamEE"} = -1;
+		}
+		if(not exists($href->{$asId}->{"upstreamES"})){
+			$href->{$asId}->{"upstreamES"} = -1;
+		}
+
+	}
+	close FF;
+}
+
+sub removeAsIdFromAsIdList{
+	my ($asIdList, $asId) = @_;
+	my (@asId, $returnAsIdList, $tmpAsId);
+	@asId = split(/,/, $asIdList);
+	foreach $tmpAsId(@asId){
+		$returnAsIdList .= $tmpAsId . "," if($tmpAsId ne $asId);
+	}
+	return substr($returnAsIdList, 0, length($returnAsIdList) - 1);
+}
